@@ -1,4 +1,11 @@
-# parser-kit
+# Parser Kit
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/parser-kit.svg)](https://pkg.go.dev/github.com/soulteary/parser-kit)
+[![Go Report Card](https://goreportcard.com/badge/github.com/soulteary/parser-kit)](https://goreportcard.com/report/github.com/soulteary/parser-kit)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![codecov](https://codecov.io/gh/soulteary/parser-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/parser-kit)
+
+[English](README.md)
 
 支持从多个数据源（文件、Redis、远程 HTTP）加载数据的通用数据加载器工具包，支持基于优先级的回退策略。
 
