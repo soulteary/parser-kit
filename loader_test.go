@@ -805,6 +805,29 @@ func TestLoader_FromRedis_FailedGet(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to get from Redis")
 }
 
+func TestLoader_FromRedis_ValueTooLarge(t *testing.T) {
+	client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+	ctx := context.Background()
+	if err := client.Ping(ctx).Err(); err != nil {
+		t.Skip("Redis not available")
+	}
+	defer func() { _ = client.Close() }()
+
+	key := "test:too-large:" + time.Now().Format("20060102150405")
+	err := client.Set(ctx, key, "0123456789", time.Minute).Err()
+	require.NoError(t, err)
+	defer client.Del(ctx, key)
+
+	opts := DefaultLoadOptions()
+	opts.MaxFileSize = 5
+	loader, err := NewLoader[TestUser](opts)
+	require.NoError(t, err)
+
+	_, err = loader.FromRedis(ctx, client, key)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "redis value exceeds max size")
+}
+
 // --- loadFromSource Remote 分支：Config.Timeout > 0 ---
 func TestLoader_Load_RemoteSource_WithTimeout(t *testing.T) {
 	data := []TestUser{{ID: "1", Email: "timeout@test.com", Phone: "777"}}

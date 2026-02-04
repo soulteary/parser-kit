@@ -15,7 +15,7 @@
 - **基于优先级的回退**：如果前一个源失败，自动回退到下一个源
 - **泛型设计**：适用于任何可 JSON 序列化的类型
 - **HTTP 重试机制**：远程请求自动重试，支持指数退避
-- **大小限制**：防止内存耗尽攻击
+- **大小限制**：防止内存耗尽攻击（文件/远程；Redis 也会基于 MaxFileSize 做大小校验）
 - **规范化支持**：解析后可选的数据规范化
 
 ## 安装
@@ -156,6 +156,7 @@ loader, err := parserkit.NewLoaderWithNormalize[User](opts, normalizeFunc)
 ### 远程源
 
 从远程 HTTP/HTTPS 端点加载数据。
+请确保 `RemoteURL` 可信或在调用方做校验，以避免 SSRF 风险。
 
 ```go
 {
@@ -165,10 +166,11 @@ loader, err := parserkit.NewLoaderWithNormalize[User](opts, normalizeFunc)
         RemoteURL:           "https://api.example.com/data",
         AuthorizationHeader: "Bearer token", // 可选
         Timeout:             5 * time.Second, // 可选，未设置则使用默认值
-        InsecureSkipVerify: false,           // 可选，用于开发环境
+        InsecureSkipVerify: false,           // 可选，用于开发环境（全局选项，见下方说明）
     },
 }
 ```
+> 说明：`InsecureSkipVerify` 仅在创建 loader 时通过 `LoadOptions` 生效；单个 source 的该字段会被忽略，如需不同 TLS 行为请创建不同 loader。
 
 ## 优先级系统
 
@@ -216,6 +218,7 @@ users, _ := loader.Load(ctx, sources...)
 | `KeyFunc` | nil | `merge` 时必填；`func(T) (string, bool)` |
 
 建议使用 `DefaultLoadOptions()` 再按需覆盖字段，以保证 `MaxFileSize` 等被正确设置。
+`MaxFileSize` 也会在读取 Redis 时用于大小校验。
 
 ## 错误处理
 

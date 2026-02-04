@@ -189,6 +189,17 @@ func (l *loader[T]) FromRedis(ctx context.Context, client interface{}, key strin
 		return nil, fmt.Errorf("invalid Redis client type")
 	}
 
+	// Enforce MaxFileSize for Redis values to prevent memory exhaustion
+	if l.options.MaxFileSize > 0 {
+		size, err := redisClient.StrLen(ctx, key).Result()
+		if err != nil && err != redis.Nil {
+			return nil, fmt.Errorf("failed to get Redis value size: %w", err)
+		}
+		if err == nil && size > l.options.MaxFileSize {
+			return nil, fmt.Errorf("redis value exceeds max size: %d > %d", size, l.options.MaxFileSize)
+		}
+	}
+
 	// Get data from Redis
 	val, err := redisClient.Get(ctx, key).Result()
 	if err != nil {
