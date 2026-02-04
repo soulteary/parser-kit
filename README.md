@@ -15,7 +15,7 @@ A generic data loader kit that supports loading data from multiple sources (file
 - **Priority-based fallback**: Automatically fallback to next source if previous one fails
 - **Generic design**: Works with any JSON-serializable type
 - **HTTP retry mechanism**: Automatic retry with exponential backoff for remote requests
-- **Size limits**: Protection against memory exhaustion attacks
+- **Size limits**: Protection against memory exhaustion attacks (file/remote; Redis uses MaxFileSize with a size check)
 - **Normalization support**: Optional data normalization after parsing
 
 ## Installation
@@ -156,6 +156,7 @@ Loads data from a Redis key (must contain JSON).
 ### Remote Source
 
 Loads data from a remote HTTP/HTTPS endpoint.
+Make sure `RemoteURL` is trusted or validated by the caller to avoid SSRF.
 
 ```go
 {
@@ -165,10 +166,11 @@ Loads data from a remote HTTP/HTTPS endpoint.
         RemoteURL:           "https://api.example.com/data",
         AuthorizationHeader: "Bearer token", // Optional
         Timeout:             5 * time.Second, // Optional, uses default if not set
-        InsecureSkipVerify: false,           // Optional, for development
+        InsecureSkipVerify: false,           // Optional, for development (global option; see note below)
     },
 }
 ```
+> Note: `InsecureSkipVerify` is applied at loader creation time via `LoadOptions`. Per-source values are ignored; create separate loaders if you need different TLS behavior per source.
 
 ## Priority System
 
@@ -216,6 +218,7 @@ users, _ := loader.Load(ctx, sources...)
 | `KeyFunc` | nil | Required for `merge`; `func(T) (string, bool)` |
 
 Use `DefaultLoadOptions()` and override fields as needed so `MaxFileSize` and similar are set.
+`MaxFileSize` is also used as a Redis value size guard before loading.
 
 ## Error Handling
 
