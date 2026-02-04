@@ -166,9 +166,9 @@ loader, err := parserkit.NewLoaderWithNormalize[User](opts, normalizeFunc)
         RemoteURL:           "https://api.example.com/data",
         AuthorizationHeader: "Bearer token", // 可选
         Timeout:             5 * time.Second, // 可选，未设置则使用默认值
-        InsecureSkipVerify: false,           // 可选，用于开发环境（全局选项，见下方说明）
     },
 }
+// 说明：InsecureSkipVerify 在创建 Loader 时通过 LoadOptions 设置，非按源配置。
 ```
 > 说明：`InsecureSkipVerify` 仅在创建 loader 时通过 `LoadOptions` 生效；单个 source 的该字段会被忽略，如需不同 TLS 行为请创建不同 loader。
 
@@ -226,10 +226,22 @@ users, _ := loader.Load(ctx, sources...)
 - 单独的源方法（`FromFile`、`FromRemote`、`FromRedis`）立即返回错误
 - 文件未找到：默认返回错误；设置 `AllowEmptyFile: true` 可改为返回 `[]`
 
+## 测试
+
+测试无需真实 Redis。用例通过 [miniredis](https://github.com/alicebob/miniredis) 模拟 Redis，本地即可跑通全部测试与覆盖率：
+
+```bash
+go test ./...
+go test -coverprofile=coverage.out -covermode=atomic ./...
+go tool cover -func=coverage.out
+```
+
 ## 依赖
 
 - `github.com/soulteary/http-kit` - 用于 HTTP 客户端和重试逻辑
 - `github.com/redis/go-redis/v9` - 用于 Redis 操作
+
+仅测试依赖：`github.com/alicebob/miniredis/v2`（测试用内存 Redis）。
 
 ## 许可证
 

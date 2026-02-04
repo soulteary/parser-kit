@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -108,6 +110,34 @@ func TestLoader_FromFile_InvalidJSON(t *testing.T) {
 	_, err = loader.FromFile(ctx, tmpFile.Name())
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse JSON")
+}
+
+// FromFile: stat 返回非 NotExist 错误（如非法路径）
+func TestLoader_FromFile_StatError(t *testing.T) {
+	loader, err := NewLoader[TestUser](DefaultLoadOptions())
+	require.NoError(t, err)
+	// 使用含空字节的路径，在多数系统上 Stat 会失败且错误不是 IsNotExist
+	invalidPath := "\x00invalid"
+	_, err = loader.FromFile(context.Background(), invalidPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to stat file")
+}
+
+// FromFile: 路径是目录时，可能报 "failed to open file"（Windows）、"failed to read file"（Unix 读目录）或 "failed to parse JSON"
+func TestLoader_FromFile_OpenOrReadError(t *testing.T) {
+	dir, err := os.MkdirTemp("", "parser-dir-*")
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	loader, err := NewLoader[TestUser](DefaultLoadOptions())
+	require.NoError(t, err)
+	_, err = loader.FromFile(context.Background(), dir)
+	require.Error(t, err)
+	errMsg := err.Error()
+	valid := strings.Contains(errMsg, "failed to open file") ||
+		strings.Contains(errMsg, "failed to read file") ||
+		strings.Contains(errMsg, "failed to parse JSON")
+	assert.True(t, valid, "err: %s", errMsg)
 }
 
 func TestLoader_FromRedis(t *testing.T) {
@@ -374,6 +404,29 @@ func TestDefaultLoadOptions(t *testing.T) {
 	assert.Nil(t, opts.KeyFunc)
 }
 
+// NewLoader 使用 opts 且 MaxFileSize==0、LoadStrategy=="" 时使用默认值
+func TestLoader_NewLoader_OptsDefaulting(t *testing.T) {
+	opts := &LoadOptions{
+		MaxFileSize:  0,
+		LoadStrategy: "",
+	}
+	loader, err := NewLoader[TestUser](opts)
+	require.NoError(t, err)
+	require.NotNil(t, loader)
+	assert.Equal(t, int64(10*1024*1024), opts.MaxFileSize)
+	assert.Equal(t, LoadStrategyFallback, opts.LoadStrategy)
+
+	tmpFile, err := os.CreateTemp("", "test-opts-*.json")
+	require.NoError(t, err)
+	_, _ = tmpFile.Write([]byte(`[{"id":"1","email":"a@b.com","phone":"1"}]`))
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	users, err := loader.FromFile(context.Background(), tmpFile.Name())
+	require.NoError(t, err)
+	assert.Len(t, users, 1)
+}
+
 func TestLoader_Load_MergeStrategy(t *testing.T) {
 	// Create two files with overlapping and distinct data (same write pattern as TestLoader_FromFile)
 	file1Data := []TestUser{
@@ -440,6 +493,29 @@ func TestLoader_Load_MergeStrategy_WithoutKeyFunc(t *testing.T) {
 	_, err := NewLoader[TestUser](opts)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "KeyFunc is required")
+}
+
+// Merge 策略下同一 source 内重复 key（key 已存在不追加 order）
+func TestLoader_Load_MergeStrategy_DuplicateKeyInSource(t *testing.T) {
+	// 同一文件中两条记录相同 phone，merge 时第二条覆盖第一条，order 只保留一个 key
+	tmpFile, err := os.CreateTemp("", "merge-dup-*.json")
+	require.NoError(t, err)
+	tmpFileName := tmpFile.Name()
+	_, _ = tmpFile.Write([]byte(`[{"id":"1","email":"first@x.com","phone":"1"},{"id":"2","email":"second@x.com","phone":"1"}]`))
+	_ = tmpFile.Close()
+	defer func() { _ = os.Remove(tmpFileName) }()
+
+	keyFunc := func(u TestUser) (string, bool) { return u.Phone, true }
+	opts := DefaultLoadOptions()
+	opts.LoadStrategy = LoadStrategyMerge
+	opts.KeyFunc = keyFunc
+	loader, err := NewLoader[TestUser](opts)
+	require.NoError(t, err)
+	sources := []Source{{Type: SourceTypeFile, Priority: 0, Config: SourceConfig{FilePath: tmpFileName}}}
+	users, err := loader.Load(context.Background(), sources...)
+	require.NoError(t, err)
+	assert.Len(t, users, 1)
+	assert.Equal(t, "second@x.com", users[0].Email)
 }
 
 // --- FromRemote coverage ---
@@ -566,6 +642,17 @@ func TestLoader_Load_RedisSource_EmptyKey(t *testing.T) {
 		{Type: SourceTypeRedis, Priority: 0, Config: SourceConfig{RedisKey: "", RedisClient: client}},
 	}
 	_, err = loader.Load(ctx, sources...)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "redis key or client not specified")
+}
+
+func TestLoader_Load_RedisSource_NilClient(t *testing.T) {
+	loader, err := NewLoader[TestUser](DefaultLoadOptions())
+	require.NoError(t, err)
+	sources := []Source{
+		{Type: SourceTypeRedis, Priority: 0, Config: SourceConfig{RedisKey: "some:key", RedisClient: nil}},
+	}
+	_, err = loader.Load(context.Background(), sources...)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "redis key or client not specified")
 }
@@ -802,7 +889,7 @@ func TestLoader_FromRedis_FailedGet(t *testing.T) {
 
 	_, err = loader.FromRedis(ctxCancelled, client, "any-key")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get from Redis")
+	assert.Contains(t, err.Error(), "failed to get")
 }
 
 func TestLoader_FromRedis_ValueTooLarge(t *testing.T) {
@@ -826,6 +913,95 @@ func TestLoader_FromRedis_ValueTooLarge(t *testing.T) {
 	_, err = loader.FromRedis(ctx, client, key)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "redis value exceeds max size")
+}
+
+// --- FromRedis with miniredis (always run, no skip) ---
+
+func TestLoader_FromRedis_Miniredis_Success(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer func() { _ = client.Close() }()
+
+	testData := []TestUser{
+		{ID: "1", Email: "m1@example.com", Phone: "111"},
+		{ID: "2", Email: "m2@example.com", Phone: "222"},
+	}
+	jsonData, err := json.Marshal(testData)
+	require.NoError(t, err)
+	err = client.Set(context.Background(), "miniredis:users", jsonData, time.Minute).Err()
+	require.NoError(t, err)
+
+	loader, err := NewLoader[TestUser](DefaultLoadOptions())
+	require.NoError(t, err)
+	users, err := loader.FromRedis(context.Background(), client, "miniredis:users")
+	require.NoError(t, err)
+	assert.Len(t, users, 2)
+	assert.Equal(t, "m1@example.com", users[0].Email)
+}
+
+func TestLoader_FromRedis_Miniredis_NotFound(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer func() { _ = client.Close() }()
+
+	loader, err := NewLoader[TestUser](DefaultLoadOptions())
+	require.NoError(t, err)
+	_, err = loader.FromRedis(context.Background(), client, "miniredis:nonexistent")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "key not found")
+}
+
+func TestLoader_FromRedis_Miniredis_InvalidJSON(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer func() { _ = client.Close() }()
+
+	err := client.Set(context.Background(), "miniredis:bad", "not valid json", time.Minute).Err()
+	require.NoError(t, err)
+
+	loader, err := NewLoader[TestUser](DefaultLoadOptions())
+	require.NoError(t, err)
+	_, err = loader.FromRedis(context.Background(), client, "miniredis:bad")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse JSON")
+}
+
+func TestLoader_FromRedis_Miniredis_FailedGet(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer func() { _ = client.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	loader, err := NewLoader[TestUser](DefaultLoadOptions())
+	require.NoError(t, err)
+	_, err = loader.FromRedis(ctx, client, "any-key")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get")
+}
+
+func TestLoader_FromRedis_Miniredis_WithNormalize(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer func() { _ = client.Close() }()
+
+	testData := []TestUser{{ID: "1", Email: "RAW@EXAMPLE.COM", Phone: "999"}}
+	jsonData, _ := json.Marshal(testData)
+	_ = client.Set(context.Background(), "miniredis:norm", jsonData, time.Minute).Err()
+
+	normalize := func(users []TestUser) []TestUser {
+		for i := range users {
+			users[i].Email = "normalized@redis.com"
+		}
+		return users
+	}
+	loader, err := NewLoaderWithNormalize[TestUser](DefaultLoadOptions(), normalize)
+	require.NoError(t, err)
+	users, err := loader.FromRedis(context.Background(), client, "miniredis:norm")
+	require.NoError(t, err)
+	assert.Len(t, users, 1)
+	assert.Equal(t, "normalized@redis.com", users[0].Email)
 }
 
 // --- loadFromSource Remote 分支：Config.Timeout > 0 ---

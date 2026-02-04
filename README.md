@@ -166,9 +166,9 @@ Make sure `RemoteURL` is trusted or validated by the caller to avoid SSRF.
         RemoteURL:           "https://api.example.com/data",
         AuthorizationHeader: "Bearer token", // Optional
         Timeout:             5 * time.Second, // Optional, uses default if not set
-        InsecureSkipVerify: false,           // Optional, for development (global option; see note below)
     },
 }
+// Note: InsecureSkipVerify is set in LoadOptions at loader creation, not per source.
 ```
 > Note: `InsecureSkipVerify` is applied at loader creation time via `LoadOptions`. Per-source values are ignored; create separate loaders if you need different TLS behavior per source.
 
@@ -226,10 +226,22 @@ Use `DefaultLoadOptions()` and override fields as needed so `MaxFileSize` and si
 - Individual source methods (`FromFile`, `FromRemote`, `FromRedis`) return errors immediately
 - File not found: error by default; use `AllowEmptyFile: true` to return `[]`
 
+## Testing
+
+Tests do not require a real Redis instance. The suite uses [miniredis](https://github.com/alicebob/miniredis) for Redis-related tests, so you can run tests and coverage locally without any external services:
+
+```bash
+go test ./...
+go test -coverprofile=coverage.out -covermode=atomic ./...
+go tool cover -func=coverage.out
+```
+
 ## Dependencies
 
 - `github.com/soulteary/http-kit` - For HTTP client and retry logic
 - `github.com/redis/go-redis/v9` - For Redis operations
+
+Test-only: `github.com/alicebob/miniredis/v2` for in-process Redis in tests.
 
 ## License
 
