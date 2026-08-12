@@ -6,8 +6,6 @@ on:
   pull_request:
     branches: [ main, develop ]
 
-env:
-  GO_VERSION: '1.26'
 
 jobs:
   # Code formatting check
@@ -21,7 +19,7 @@ jobs:
       - name: Set up Go environment
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: 'go.mod'
 
       - name: Check code formatting
         run: |
@@ -42,7 +40,7 @@ jobs:
       - name: Set up Go environment
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: 'go.mod'
 
       - name: Run go vet
         run: go vet ./...
@@ -51,9 +49,6 @@ jobs:
   test:
     name: Code Testing
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: ['1.26']
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -61,7 +56,7 @@ jobs:
       - name: Set up Go environment
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ matrix.go-version }}
+          go-version-file: 'go.mod'
 
       - name: Run tests
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
@@ -98,7 +93,7 @@ jobs:
       - name: Set up Go environment
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: 'go.mod'
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -118,7 +113,7 @@ jobs:
       - name: Set up Go environment
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version-file: 'go.mod'
 
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
