@@ -1,6 +1,6 @@
 module github.com/soulteary/parser-kit
 
-go 1.26
+go 1.26.6
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
