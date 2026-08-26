@@ -17,8 +17,8 @@ github.com/klauspost/cpuid/v2 v2.2.10 h1:tBs3QSyvjDyFTq3uoc/9xFpCuOsJQFNPiAhYdw2
 github.com/klauspost/cpuid/v2 v2.2.10/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=
 github.com/redis/go-redis/v9 v9.22.0 h1:laDvpYXTJtZLloinw1fA5Kqd6HAEH2XKxOkG/PDq2F0=
 github.com/redis/go-redis/v9 v9.22.0/go.mod h1:y2g0Wj8rQvuK0ELM+oxSudcLtC09JScs98I/X9gRWY4=
-github.com/soulteary/http-kit v1.3.0 h1:3X35xu48Xqee6o6CRRZozDXMRmDNl8OvOhozfpkGeTg=
-github.com/soulteary/http-kit v1.3.0/go.mod h1:yElWZr6kCSNmU6X1y1x5MZ5LUj2MNbU4+CZ1EPVbWW4=
+github.com/soulteary/http-kit v1.4.0 h1:orLr130riJeLd7lF3amwJ+oG8LNnE2S9Tb/fbRrPCNg=
+github.com/soulteary/http-kit v1.4.0/go.mod h1:WoOxPjfMZrj0IYEn/Lagb3vGt9eFlsPXutwRufckOpA=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/yuin/gopher-lua v1.1.1 h1:kYKnWBjvbNP4XLT3+bPEwAXJx262OhaHDWDVOPjL46M=

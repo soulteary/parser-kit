@@ -1,11 +1,11 @@
 module github.com/soulteary/parser-kit
 
-go 1.26.6
+go 1.27.0
 
 require (
 	github.com/alicebob/miniredis/v2 v2.36.1
 	github.com/redis/go-redis/v9 v9.22.0
-	github.com/soulteary/http-kit v1.3.0
+	github.com/soulteary/http-kit v1.4.0
 	github.com/stretchr/testify v1.12.1
 )
 
