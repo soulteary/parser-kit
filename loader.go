@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -31,6 +32,11 @@ func NewLoaderWithNormalize[T any](opts *LoadOptions, normalizeFunc NormalizeFun
 	if opts == nil {
 		opts = DefaultLoadOptions()
 	} else {
+		// Work on a copy: mutating the caller's struct surprises anyone who
+		// reuses or shares it.
+		cloned := *opts
+		opts = &cloned
+
 		// MaxFileSize 0 would cause io.LimitReader to read 0 bytes; use default when unset
 		if opts.MaxFileSize == 0 {
 			opts.MaxFileSize = DefaultLoadOptions().MaxFileSize
@@ -77,6 +83,20 @@ func NewLoaderWithNormalize[T any](opts *LoadOptions, normalizeFunc NormalizeFun
 	}, nil
 }
 
+// readLimit is the byte budget handed to io.LimitReader: one past MaxFileSize,
+// so reading the extra byte makes an overrun detectable rather than silently
+// truncating. It saturates instead of wrapping, because MaxFileSize set to
+// math.MaxInt64 -- the natural way to say "no limit" -- would otherwise
+// overflow to math.MinInt64 and make LimitReader return EOF immediately.
+func readLimit(maxSize int64) int64 {
+	// == rather than >=: for an int64 the two are equivalent here, and
+	// staticcheck rightly points out that nothing exceeds math.MaxInt64.
+	if maxSize == math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return maxSize + 1
+}
+
 // FromFile loads data from a local file
 func (l *loader[T]) FromFile(ctx context.Context, path string) ([]T, error) {
 	// Check if file exists
@@ -97,10 +117,17 @@ func (l *loader[T]) FromFile(ctx context.Context, path string) ([]T, error) {
 	}
 	defer func() { _ = file.Close() }()
 
-	// Read file with size limit
-	raw, err := io.ReadAll(io.LimitReader(file, l.options.MaxFileSize))
+	// Read with the size limit, and distinguish "too large" from "malformed".
+	//
+	// io.LimitReader truncates silently, so an oversized file surfaced as a
+	// JSON parse error with no way to tell the two apart. Reading one byte
+	// past the limit makes the overrun detectable.
+	raw, err := io.ReadAll(io.LimitReader(file, readLimit(l.options.MaxFileSize)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+	if int64(len(raw)) > l.options.MaxFileSize {
+		return nil, fmt.Errorf("%w: file %q exceeds MaxFileSize (%d bytes)", ErrSourceTooLarge, path, l.options.MaxFileSize)
 	}
 
 	// Parse JSON
@@ -117,7 +144,14 @@ func (l *loader[T]) FromFile(ctx context.Context, path string) ([]T, error) {
 	return data, nil
 }
 
-// FromRemote loads data from a remote URL
+// FromRemote loads data from a remote URL.
+//
+// SECURITY: url is used as given and auth is sent as an Authorization header.
+// Nothing here validates the destination, so passing a caller-controlled URL
+// makes this an SSRF primitive that forwards credentials. Validate untrusted
+// URLs before calling -- cli-kit's validator.ValidateURL plus
+// validator.SSRFDialControl on the transport covers both the name and the
+// address it actually resolves to at connect time.
 func (l *loader[T]) FromRemote(ctx context.Context, url, auth string) ([]T, error) {
 	// Create request
 	req, err := http.NewRequestWithContext(ctx, "GET", url, http.NoBody)
@@ -161,10 +195,13 @@ func (l *loader[T]) FromRemote(ctx context.Context, url, auth string) ([]T, erro
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	// Read response body with size limit
-	body, err := io.ReadAll(io.LimitReader(resp.Body, l.options.MaxFileSize))
+	// Read with the size limit; see FromFile on why one extra byte is read.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, readLimit(l.options.MaxFileSize)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if int64(len(body)) > l.options.MaxFileSize {
+		return nil, fmt.Errorf("%w: response from %q exceeds MaxFileSize (%d bytes)", ErrSourceTooLarge, url, l.options.MaxFileSize)
 	}
 
 	// Parse JSON
@@ -196,7 +233,7 @@ func (l *loader[T]) FromRedis(ctx context.Context, client interface{}, key strin
 			return nil, fmt.Errorf("failed to get Redis value size: %w", err)
 		}
 		if err == nil && size > l.options.MaxFileSize {
-			return nil, fmt.Errorf("redis value exceeds max size: %d > %d", size, l.options.MaxFileSize)
+			return nil, fmt.Errorf("%w: redis key %q is %d bytes, over MaxFileSize (%d bytes)", ErrSourceTooLarge, key, size, l.options.MaxFileSize)
 		}
 	}
 
@@ -232,7 +269,9 @@ func (l *loader[T]) Load(ctx context.Context, sources ...Source) ([]T, error) {
 	// Sort sources by priority (lower number = higher priority)
 	sortedSources := make([]Source, len(sources))
 	copy(sortedSources, sources)
-	sort.Slice(sortedSources, func(i, j int) bool {
+	// Stable: sort.Slice is not, so two sources sharing a priority took an
+	// arbitrary order that could differ between runs on identical input.
+	sort.SliceStable(sortedSources, func(i, j int) bool {
 		return sortedSources[i].Priority < sortedSources[j].Priority
 	})
 
@@ -250,7 +289,14 @@ func (l *loader[T]) Load(ctx context.Context, sources ...Source) ([]T, error) {
 	return l.loadWithFallback(ctx, sortedSources)
 }
 
-// loadWithFallback implements fallback strategy: returns data from first successful source
+// loadWithFallback implements fallback strategy: returns data from first successful source.
+//
+// NOTE on AllowEmptyData: when it is false, a source that returns successfully
+// but with zero rows is treated as a failure and the next source is tried.
+// That is dangerous for allow/deny lists: clearing the primary source falls
+// back to a stale copy in Redis or on a remote, so entries that were just
+// deleted come back. Set AllowEmptyData when an empty result is a legitimate
+// state -- which for a policy list it almost always is.
 func (l *loader[T]) loadWithFallback(ctx context.Context, sources []Source) ([]T, error) {
 	var lastErr error
 	for _, source := range sources {
