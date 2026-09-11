@@ -2,6 +2,7 @@ package parserkit
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -126,3 +127,10 @@ func DefaultLoadOptions() *LoadOptions {
 		KeyFunc:            nil,
 	}
 }
+
+// ErrSourceTooLarge reports that a source exceeded LoadOptions.MaxFileSize.
+//
+// It exists so the overrun is distinguishable from malformed content:
+// io.LimitReader truncates silently, so an oversized file previously surfaced
+// as a JSON parse error.
+var ErrSourceTooLarge = errors.New("parserkit: source exceeds MaxFileSize")

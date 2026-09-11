@@ -413,8 +413,13 @@ func TestLoader_NewLoader_OptsDefaulting(t *testing.T) {
 	loader, err := NewLoader[TestUser](opts)
 	require.NoError(t, err)
 	require.NotNil(t, loader)
-	assert.Equal(t, int64(10*1024*1024), opts.MaxFileSize)
-	assert.Equal(t, LoadStrategyFallback, opts.LoadStrategy)
+
+	// The defaults are applied to the loader's own copy. Writing them back
+	// into the caller's struct surprises anyone reusing or sharing it, so the
+	// argument is left untouched; the load below proves the defaults took
+	// effect (MaxFileSize 0 would make io.LimitReader read nothing).
+	assert.Equal(t, int64(0), opts.MaxFileSize, "NewLoader must not mutate the caller's options")
+	assert.Equal(t, LoadStrategy(""), opts.LoadStrategy, "NewLoader must not mutate the caller's options")
 
 	tmpFile, err := os.CreateTemp("", "test-opts-*.json")
 	require.NoError(t, err)
