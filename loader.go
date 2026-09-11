@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -82,6 +83,18 @@ func NewLoaderWithNormalize[T any](opts *LoadOptions, normalizeFunc NormalizeFun
 	}, nil
 }
 
+// readLimit is the byte budget handed to io.LimitReader: one past MaxFileSize,
+// so reading the extra byte makes an overrun detectable rather than silently
+// truncating. It saturates instead of wrapping, because MaxFileSize set to
+// math.MaxInt64 -- the natural way to say "no limit" -- would otherwise
+// overflow to math.MinInt64 and make LimitReader return EOF immediately.
+func readLimit(maxSize int64) int64 {
+	if maxSize >= math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return maxSize + 1
+}
+
 // FromFile loads data from a local file
 func (l *loader[T]) FromFile(ctx context.Context, path string) ([]T, error) {
 	// Check if file exists
@@ -107,7 +120,7 @@ func (l *loader[T]) FromFile(ctx context.Context, path string) ([]T, error) {
 	// io.LimitReader truncates silently, so an oversized file surfaced as a
 	// JSON parse error with no way to tell the two apart. Reading one byte
 	// past the limit makes the overrun detectable.
-	raw, err := io.ReadAll(io.LimitReader(file, l.options.MaxFileSize+1))
+	raw, err := io.ReadAll(io.LimitReader(file, readLimit(l.options.MaxFileSize)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}
@@ -181,7 +194,7 @@ func (l *loader[T]) FromRemote(ctx context.Context, url, auth string) ([]T, erro
 	}
 
 	// Read with the size limit; see FromFile on why one extra byte is read.
-	body, err := io.ReadAll(io.LimitReader(resp.Body, l.options.MaxFileSize+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, readLimit(l.options.MaxFileSize)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -218,7 +231,7 @@ func (l *loader[T]) FromRedis(ctx context.Context, client interface{}, key strin
 			return nil, fmt.Errorf("failed to get Redis value size: %w", err)
 		}
 		if err == nil && size > l.options.MaxFileSize {
-			return nil, fmt.Errorf("redis value exceeds max size: %d > %d", size, l.options.MaxFileSize)
+			return nil, fmt.Errorf("%w: redis key %q is %d bytes, over MaxFileSize (%d bytes)", ErrSourceTooLarge, key, size, l.options.MaxFileSize)
 		}
 	}
 
