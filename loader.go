@@ -89,7 +89,9 @@ func NewLoaderWithNormalize[T any](opts *LoadOptions, normalizeFunc NormalizeFun
 // math.MaxInt64 -- the natural way to say "no limit" -- would otherwise
 // overflow to math.MinInt64 and make LimitReader return EOF immediately.
 func readLimit(maxSize int64) int64 {
-	if maxSize >= math.MaxInt64 {
+	// == rather than >=: for an int64 the two are equivalent here, and
+	// staticcheck rightly points out that nothing exceeds math.MaxInt64.
+	if maxSize == math.MaxInt64 {
 		return math.MaxInt64
 	}
 	return maxSize + 1
