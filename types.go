@@ -89,6 +89,15 @@ type LoadOptions struct {
 	// RetryDelay for remote requests (default: 1s)
 	RetryDelay time.Duration
 
+	// MaxRetryDelay caps the backoff between remote retries (default: 30s).
+	//
+	// It must be positive. http-kit's CalculateRetryDelay clamps every computed
+	// delay to this ceiling unconditionally, so a zero value does not mean
+	// "no ceiling" -- it means every retry happens immediately, which turns a
+	// failing remote source into a tight request loop. NewLoader fills the
+	// default when this is unset for exactly that reason.
+	MaxRetryDelay time.Duration
+
 	// HTTPTimeout for remote requests (default: 5s)
 	HTTPTimeout time.Duration
 
@@ -119,6 +128,7 @@ func DefaultLoadOptions() *LoadOptions {
 		MaxFileSize:        10 * 1024 * 1024, // 10MB
 		MaxRetries:         3,
 		RetryDelay:         1 * time.Second,
+		MaxRetryDelay:      30 * time.Second,
 		HTTPTimeout:        5 * time.Second,
 		InsecureSkipVerify: false,
 		AllowEmptyFile:     false,
