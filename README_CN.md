@@ -318,7 +318,20 @@ go tool cover -func=coverage.out
 
 仅测试依赖：`github.com/alicebob/miniredis/v2`（测试用内存 Redis）。
 
-## 升级说明（v1.6.0）
+## 升级说明
+
+### v1.7.0
+
+- **远程重试重新有了退避。** `FromRemote` 从未设置过 `MaxRetryDelay`，而 http-kit 会把
+  每个算出来的退避时间*无条件*夹到这个上限——上限为零，于是三次重试全部立即发生，一个
+  正在失败的源就变成了紧密的请求循环。按默认值，现在的间隔是 1s、2s、4s，而不是完全
+  没有间隔。**此前快速失败的远程源，现在要几秒钟才会耗尽重试次数**；如果你依赖旧的
+  时序，请调小 `RetryDelay` 或 `MaxRetries`。
+- **新增 `LoadOptions.MaxRetryDelay`**（默认 30s）。出于上述原因，留空时 `NewLoader`
+  与 `NewLoaderWithNormalize` 会替你填上默认值：你传入的零值会被替换而不是被采纳，
+  因为它的含义是"没有退避"，而不是"没有上限"。想用别的上限就显式设置。
+
+### v1.6.0
 
 新增一个哨兵错误，没有删除任何东西。两条错误路径的报告方式变了。
 

@@ -328,7 +328,23 @@ go tool cover -func=coverage.out
 
 Test-only: `github.com/alicebob/miniredis/v2` for in-process Redis in tests.
 
-## Upgrade Notes (v1.6.0)
+## Upgrade Notes
+
+### v1.7.0
+
+- **Remote retries back off again.** `FromRemote` never set `MaxRetryDelay`, and
+  http-kit clamps every computed delay to that ceiling *unconditionally* — so a
+  ceiling of zero made all three retries fire immediately, turning a failing
+  source into a tight request loop. With the defaults the delays are now 1s, 2s
+  and 4s rather than none at all. **A remote source that used to fail fast now
+  takes a few seconds to exhaust its retries**; lower `RetryDelay` or
+  `MaxRetries` if you depended on the old timing.
+- **`LoadOptions.MaxRetryDelay` is new** (default 30s). `NewLoader` and
+  `NewLoaderWithNormalize` fill it in when you leave it zero, for the reason
+  above: a zero you pass is replaced rather than honoured, because it means "no
+  backoff", not "no ceiling". Set it explicitly to choose a different ceiling.
+
+### v1.6.0
 
 One sentinel was added; nothing was removed. Two error paths report differently.
 

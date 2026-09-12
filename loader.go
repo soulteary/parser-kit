@@ -89,11 +89,6 @@ func NewLoaderWithNormalize[T any](opts *LoadOptions, normalizeFunc NormalizeFun
 	}, nil
 }
 
-// readLimit is the byte budget handed to io.LimitReader: one past MaxFileSize,
-// so reading the extra byte makes an overrun detectable rather than silently
-// truncating. It saturates instead of wrapping, because MaxFileSize set to
-// math.MaxInt64 -- the natural way to say "no limit" -- would otherwise
-// overflow to math.MinInt64 and make LimitReader return EOF immediately.
 // retryOptions builds the retry policy handed to http-kit.
 //
 // MaxRetryDelay is load-bearing: http-kit clamps each computed delay to it
@@ -116,6 +111,11 @@ func (l *loader[T]) retryOptions() *httpkit.RetryOptions {
 	}
 }
 
+// readLimit is the byte budget handed to io.LimitReader: one past MaxFileSize,
+// so reading the extra byte makes an overrun detectable rather than silently
+// truncating. It saturates instead of wrapping, because MaxFileSize set to
+// math.MaxInt64 -- the natural way to say "no limit" -- would otherwise
+// overflow to math.MinInt64 and make LimitReader return EOF immediately.
 func readLimit(maxSize int64) int64 {
 	// == rather than >=: for an int64 the two are equivalent here, and
 	// staticcheck rightly points out that nothing exceeds math.MaxInt64.
