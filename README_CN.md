@@ -18,6 +18,11 @@
 - **大小限制**：防止内存耗尽攻击（文件/远程；Redis 也会基于 MaxFileSize 做大小校验）
 - **规范化支持**：解析后可选的数据规范化
 
+## 环境要求
+
+- **Go 1.27+**（`go.mod` 声明 `go 1.27.0`）
+- Redis 源需要 `github.com/redis/go-redis/v9`
+
 ## 安装
 
 ```bash
@@ -172,6 +177,26 @@ loader, err := parserkit.NewLoaderWithNormalize[User](opts, normalizeFunc)
 ```
 > 说明：`InsecureSkipVerify` 仅在创建 loader 时通过 `LoadOptions` 生效；单个 source 的该字段会被忽略，如需不同 TLS 行为请创建不同 loader。
 
+### 远程源的安全提示
+
+`FromRemote` **原样**使用传入的 URL，并把 `auth` 作为 `Authorization` 头发送，不做任何
+校验。因此一个调用方可控的 URL 会让它变成一个 SSRF 原语，并把你的凭证转发到 URL 指向的
+任何地方。
+
+请在传入之前校验 URL，并在拨号层面关掉 DNS 重绑定窗口：
+
+```go
+import "github.com/soulteary/cli-kit/validator"
+
+opts := &validator.URLOptions{AllowedSchemes: []string{"https"}}
+if err := validator.ValidateURL(remoteURL, opts); err != nil {
+    return err
+}
+// 并在获取它的 transport 上使用 validator.SSRFDialControl(opts)
+```
+
+`InsecureSkipVerify` 会完全关闭 TLS 校验——仅限开发环境。
+
 ## 优先级系统
 
 源按优先级顺序处理：
@@ -179,6 +204,9 @@ loader, err := parserkit.NewLoaderWithNormalize[User](opts, normalizeFunc)
 - 优先级 0 是最高优先级
 - 如果源失败，加载器自动尝试下一个源
 - 具体行为由 LoadStrategy 决定（见下）
+
+排序是**稳定的**，因此优先级相同的两个源会保持你传入时的顺序——相同输入总是得到相同
+顺序。
 
 ## 加载策略
 
@@ -222,9 +250,34 @@ users, _ := loader.Load(ctx, sources...)
 
 ## 错误处理
 
-- 如果所有源都失败，`Load()` 返回错误，包含最后遇到的错误
-- 单独的源方法（`FromFile`、`FromRemote`、`FromRedis`）立即返回错误
-- 文件未找到：默认返回错误；设置 `AllowEmptyFile: true` 可改为返回 `[]`
+- 如果所有源都失败，`Load()` 返回错误，其中带着最后遇到的那一个。
+- 单独的源方法（`FromFile`、`FromRemote`、`FromRedis`）会立即返回错误。
+- 文件未找到默认是错误；`AllowEmptyFile: true` 则返回 `[]`。
+
+### 源数据过大
+
+超过 `MaxFileSize` 的源会以 `ErrSourceTooLarge` 失败，三种源类型都是如此：
+
+```go
+data, err := loader.Load(ctx, sources...)
+if errors.Is(err, parserkit.ErrSourceTooLarge) {
+    // 源存在且可达，但超过了 MaxFileSize
+}
+```
+
+请用 `errors.Is` 判断，而不是检查错误文本——"过大"和"格式错误"是两个不同的问题，修法
+也不同。
+
+把 `MaxFileSize` 设为 `math.MaxInt64` 表示"不限制"；那一个字节的溢出探测余量会饱和而
+不是溢出。
+
+### 空源算作失败
+
+在 `AllowEmptyData: false`（默认）时，一个加载成功但没有任何条目的源被当作**失败**，
+回退策略会继续尝试下一个源。
+
+对白名单或黑名单来说这一点值得想清楚：**清空主数据源会回退到 Redis 或远程上的旧副本**，
+你刚删掉的条目又回来了。当"空"是一个合法状态时，请设置 `AllowEmptyData: true`。
 
 ## 测试
 
@@ -243,6 +296,29 @@ go tool cover -func=coverage.out
 
 仅测试依赖：`github.com/alicebob/miniredis/v2`（测试用内存 Redis）。
 
+## 升级说明（v1.6.0）
+
+新增一个哨兵错误，没有删除任何东西。两条错误路径的报告方式变了。
+
+- **源数据过大现在报告为 `ErrSourceTooLarge`，而不是格式错误。** `io.LimitReader`
+  是静默截断的，于是超过 `MaxFileSize` 的文件或 HTTP 响应会以"非法 JSON"的形式返回，
+  无法区分这两种情况。现在两条路径都会多读一个字节并报告该哨兵错误——与一开始就用
+  `STRLEN` 检查的 `FromRedis` 对齐，此前三种源对同一个状况的表现各不相同。
+  **如果你是靠匹配"非法 JSON"来识别过大的源，请改用
+  `errors.Is(err, ErrSourceTooLarge)`。**
+- **`FromRedis` 会包装该哨兵错误。** 它此前用普通格式化错误报告超大值，于是对那个
+  一直都能检测到此状况的源，`errors.Is(err, ErrSourceTooLarge)` 反而为假。
+- **`MaxFileSize: math.MaxInt64` 现在可用。** 那一个字节的探测余量
+  （`MaxFileSize+1`）会回绕成 `math.MinInt64`，`io.LimitReader` 立即返回 EOF，于是
+  **所有源——无论多小——都返回"非法 JSON"**。现在该上限会饱和。
+- **源排序是稳定的。** 此前用 `sort.Slice` 排序，优先级相同的两个源会取一个任意顺序，
+  在相同输入上每次运行都可能不同。
+- **`NewLoader`/`NewLoaderWithNormalize` 不再修改你的 `LoadOptions`。** 它们此前把
+  默认值写回了调用方的结构体。
+- **只是补充文档、行为未变**：`AllowEmptyData` 为 false 时，"成功但为空"的源算作失败
+  ——见[空源算作失败](#空源算作失败)——以及对调用方可控的 URL 来说，`FromRemote` 是一个
+  SSRF 原语。
+
 ## 许可证
 
-详见 LICENSE 文件。
+Apache License 2.0 —— 详见 [LICENSE](LICENSE)。
