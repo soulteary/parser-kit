@@ -239,12 +239,20 @@ users, _ := loader.Load(ctx, sources...)
 | `MaxFileSize` | 10MB | Max bytes to read from file/response |
 | `MaxRetries` | 3 | Retries for remote requests |
 | `RetryDelay` | 1s | Base delay between retries |
+| `MaxRetryDelay` | 30s | Ceiling on the retry backoff. **Must be positive** — see below |
 | `HTTPTimeout` | 5s | Timeout for remote requests |
 | `InsecureSkipVerify` | false | Skip TLS verification (dev only) |
 | `AllowEmptyFile` | false | Return `[]` when file not found instead of error |
 | `AllowEmptyData` | false | When false, treat empty source as failure and try next |
 | `LoadStrategy` | `fallback` | `fallback` or `merge` |
 | `KeyFunc` | nil | Required for `merge`; `func(T) (string, bool)` |
+
+`MaxRetryDelay` is not optional in the way a zero value usually is. http-kit
+clamps every computed backoff to it unconditionally, so a zero ceiling means
+**every retry fires immediately** — `RetryDelay` and the backoff multiplier look
+configured and do nothing, and a failing remote source is retried as fast as the
+network allows. `NewLoader` fills the 30s default when it is unset, so this only
+bites if you set it to zero on purpose.
 
 Use `DefaultLoadOptions()` and override the fields you need, so `MaxFileSize` and
 similar are set rather than zero. `MaxFileSize` also guards the Redis value size
