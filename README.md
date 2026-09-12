@@ -18,6 +18,11 @@ A generic data loader kit that supports loading data from multiple sources (file
 - **Size limits**: Protection against memory exhaustion attacks (file/remote; Redis uses MaxFileSize with a size check)
 - **Normalization support**: Optional data normalization after parsing
 
+## Requirements
+
+- **Go 1.27+** (`go.mod` declares `go 1.27.0`)
+- `github.com/redis/go-redis/v9` for the Redis source
+
 ## Installation
 
 ```bash
@@ -172,6 +177,27 @@ Make sure `RemoteURL` is trusted or validated by the caller to avoid SSRF.
 ```
 > Note: `InsecureSkipVerify` is applied at loader creation time via `LoadOptions`. Per-source values are ignored; create separate loaders if you need different TLS behavior per source.
 
+### Security note for remote sources
+
+`FromRemote` uses the URL **as given** and sends `auth` as an `Authorization`
+header, with no validation. A caller-controlled URL therefore makes it an SSRF
+primitive that forwards your credentials to wherever the URL points.
+
+Validate the URL before passing it in, and close the DNS-rebinding window on the
+dial:
+
+```go
+import "github.com/soulteary/cli-kit/validator"
+
+opts := &validator.URLOptions{AllowedSchemes: []string{"https"}}
+if err := validator.ValidateURL(remoteURL, opts); err != nil {
+    return err
+}
+// and use validator.SSRFDialControl(opts) on the transport that fetches it
+```
+
+`InsecureSkipVerify` disables TLS verification entirely — development only.
+
 ## Priority System
 
 Sources are processed in priority order:
@@ -179,6 +205,9 @@ Sources are processed in priority order:
 - Priority 0 is the highest priority
 - If a source fails, the loader automatically tries the next source
 - Behavior depends on LoadStrategy (see below)
+
+Sorting is **stable**, so two sources sharing a priority keep the order you
+passed them in — the same input always produces the same order.
 
 ## Load Strategy
 
@@ -217,14 +246,62 @@ users, _ := loader.Load(ctx, sources...)
 | `LoadStrategy` | `fallback` | `fallback` or `merge` |
 | `KeyFunc` | nil | Required for `merge`; `func(T) (string, bool)` |
 
-Use `DefaultLoadOptions()` and override fields as needed so `MaxFileSize` and similar are set.
-`MaxFileSize` is also used as a Redis value size guard before loading.
+Use `DefaultLoadOptions()` and override the fields you need, so `MaxFileSize` and
+similar are set rather than zero. `MaxFileSize` also guards the Redis value size
+(checked with `STRLEN` before loading).
+
+`NewLoader` and `NewLoaderWithNormalize` work on a **copy** of your
+`LoadOptions`, so filling in defaults does not mutate the struct you passed:
+
+```go
+opts := parserkit.DefaultLoadOptions()
+loader, err := parserkit.NewLoader[User](opts)
+
+// NewLoaderWithNormalize post-processes every successful load
+loader, err = parserkit.NewLoaderWithNormalize[User](opts, func(users []User) []User {
+    for i := range users {
+        users[i].Phone = strings.TrimSpace(users[i].Phone)
+    }
+    return users
+})
+```
 
 ## Error Handling
 
-- If all sources fail, `Load()` returns an error with the last error encountered
-- Individual source methods (`FromFile`, `FromRemote`, `FromRedis`) return errors immediately
-- File not found: error by default; use `AllowEmptyFile: true` to return `[]`
+- If every source fails, `Load()` returns an error carrying the last one
+  encountered.
+- The individual source methods (`FromFile`, `FromRemote`, `FromRedis`) return
+  their error immediately.
+- File not found is an error by default; `AllowEmptyFile: true` returns `[]`.
+
+### Oversized sources
+
+A source larger than `MaxFileSize` fails with `ErrSourceTooLarge`, from all three
+source types:
+
+```go
+data, err := loader.Load(ctx, sources...)
+if errors.Is(err, parserkit.ErrSourceTooLarge) {
+    // the source exists and is reachable, but exceeds MaxFileSize
+}
+```
+
+Match it with `errors.Is` rather than inspecting the message — an oversized
+source and a malformed one are different problems with different fixes.
+
+Pass `math.MaxInt64` as `MaxFileSize` to mean "no limit"; the one-byte overrun
+margin saturates rather than overflowing.
+
+### An empty source counts as a failure
+
+With `AllowEmptyData: false` (the default), a source that loads successfully but
+yields no entries is treated as a **failure**, and the fallback strategy moves on
+to the next source.
+
+That is worth thinking about for an allow list or deny list: **clearing the
+primary source falls back to a stale copy** in Redis or on a remote, and entries
+you just deleted come back. Set `AllowEmptyData: true` when an empty result is a
+legitimate state.
 
 ## Testing
 
@@ -243,6 +320,35 @@ go tool cover -func=coverage.out
 
 Test-only: `github.com/alicebob/miniredis/v2` for in-process Redis in tests.
 
+## Upgrade Notes (v1.6.0)
+
+One sentinel was added; nothing was removed. Two error paths report differently.
+
+- **An oversized source is reported as `ErrSourceTooLarge`, not as malformed
+  data.** `io.LimitReader` truncates silently, so a file or HTTP response larger
+  than `MaxFileSize` came back as invalid JSON with no way to tell the two apart.
+  Both paths now read one byte past the limit and report the sentinel — matching
+  `FromRedis`, which already checked `STRLEN` up front, so the three sources
+  behaved differently for the same condition. **If you matched on "invalid JSON"
+  to detect an oversized source, match `errors.Is(err, ErrSourceTooLarge)`
+  instead.**
+- **`FromRedis` wraps the sentinel.** It reported an oversized value with a plain
+  formatted error, so `errors.Is(err, ErrSourceTooLarge)` was false for the one
+  source that had always detected the condition.
+- **`MaxFileSize: math.MaxInt64` works.** The one-byte overrun margin
+  (`MaxFileSize+1`) wrapped to `math.MinInt64`, `io.LimitReader` returned EOF
+  immediately, and **every source — however small — came back as malformed
+  JSON**. The limit saturates now.
+- **Source ordering is stable.** Sources were ordered with `sort.Slice`, so two
+  sources sharing a priority took an arbitrary order that could differ between
+  runs on identical input.
+- **`NewLoader`/`NewLoaderWithNormalize` no longer mutate your `LoadOptions`.**
+  They wrote their defaults back into the caller's struct.
+- **Documented, not changed**: an empty-but-successful source counts as a failure
+  when `AllowEmptyData` is false — see [An empty source counts as a
+  failure](#an-empty-source-counts-as-a-failure) — and `FromRemote` is an SSRF
+  primitive for a caller-controlled URL.
+
 ## License
 
-See LICENSE file for details.
+Apache License 2.0 — see [LICENSE](LICENSE) for details.
