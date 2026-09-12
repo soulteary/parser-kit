@@ -44,6 +44,12 @@ func NewLoaderWithNormalize[T any](opts *LoadOptions, normalizeFunc NormalizeFun
 		if opts.LoadStrategy == "" {
 			opts.LoadStrategy = LoadStrategyFallback
 		}
+		// A zero MaxRetryDelay is not "no ceiling": http-kit clamps every
+		// computed delay to it, so leaving it unset removed the backoff
+		// entirely and retried a failing source as fast as the network allowed.
+		if opts.MaxRetryDelay <= 0 {
+			opts.MaxRetryDelay = DefaultLoadOptions().MaxRetryDelay
+		}
 	}
 
 	// Validate LoadStrategy and KeyFunc
@@ -88,6 +94,28 @@ func NewLoaderWithNormalize[T any](opts *LoadOptions, normalizeFunc NormalizeFun
 // truncating. It saturates instead of wrapping, because MaxFileSize set to
 // math.MaxInt64 -- the natural way to say "no limit" -- would otherwise
 // overflow to math.MinInt64 and make LimitReader return EOF immediately.
+// retryOptions builds the retry policy handed to http-kit.
+//
+// MaxRetryDelay is load-bearing: http-kit clamps each computed delay to it
+// unconditionally, so omitting it made every retry immediate.
+func (l *loader[T]) retryOptions() *httpkit.RetryOptions {
+	return &httpkit.RetryOptions{
+		MaxRetries:    l.options.MaxRetries,
+		RetryDelay:    l.options.RetryDelay,
+		MaxRetryDelay: l.options.MaxRetryDelay,
+
+		BackoffMultiplier: 2.0,
+		RetryableStatusCodes: []int{
+			http.StatusRequestTimeout,
+			http.StatusTooManyRequests,
+			http.StatusInternalServerError,
+			http.StatusBadGateway,
+			http.StatusServiceUnavailable,
+			http.StatusGatewayTimeout,
+		},
+	}
+}
+
 func readLimit(maxSize int64) int64 {
 	// == rather than >=: for an int64 the two are equivalent here, and
 	// staticcheck rightly points out that nothing exceeds math.MaxInt64.
@@ -168,23 +196,8 @@ func (l *loader[T]) FromRemote(ctx context.Context, url, auth string) ([]T, erro
 	// Inject trace context if available
 	l.client.InjectTraceContext(ctx, req)
 
-	// Retry options
-	retryOpts := &httpkit.RetryOptions{
-		MaxRetries:        l.options.MaxRetries,
-		RetryDelay:        l.options.RetryDelay,
-		BackoffMultiplier: 2.0,
-		RetryableStatusCodes: []int{
-			http.StatusRequestTimeout,
-			http.StatusTooManyRequests,
-			http.StatusInternalServerError,
-			http.StatusBadGateway,
-			http.StatusServiceUnavailable,
-			http.StatusGatewayTimeout,
-		},
-	}
-
 	// Execute request with retry
-	resp, err := l.client.DoRequestWithRetry(ctx, req, retryOpts)
+	resp, err := l.client.DoRequestWithRetry(ctx, req, l.retryOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch remote data: %w", err)
 	}
