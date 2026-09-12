@@ -248,6 +248,22 @@ users, _ := loader.Load(ctx, sources...)
 建议使用 `DefaultLoadOptions()` 再按需覆盖字段，以保证 `MaxFileSize` 等被正确设置。
 `MaxFileSize` 也会在读取 Redis 时用于大小校验。
 
+`NewLoader` 和 `NewLoaderWithNormalize` 作用于你 `LoadOptions` 的**副本**，因此补默认值
+不会修改你传进去的那个结构体：
+
+```go
+opts := parserkit.DefaultLoadOptions()
+loader, err := parserkit.NewLoader[User](opts)
+
+// NewLoaderWithNormalize 会对每次成功加载的结果做后处理
+loader, err = parserkit.NewLoaderWithNormalize[User](opts, func(users []User) []User {
+    for i := range users {
+        users[i].Phone = strings.TrimSpace(users[i].Phone)
+    }
+    return users
+})
+```
+
 ## 错误处理
 
 - 如果所有源都失败，`Load()` 返回错误，其中带着最后遇到的那一个。
