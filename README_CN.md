@@ -238,6 +238,7 @@ users, _ := loader.Load(ctx, sources...)
 | `MaxFileSize` | 10MB | 文件/响应最大读取字节数 |
 | `MaxRetries` | 3 | 远程请求重试次数 |
 | `RetryDelay` | 1s | 重试间隔基准 |
+| `MaxRetryDelay` | 30s | 重试退避的上限。**必须为正** —— 见下文 |
 | `HTTPTimeout` | 5s | 远程请求超时 |
 | `InsecureSkipVerify` | false | 跳过 TLS 校验（仅开发） |
 | `AllowEmptyFile` | false | 文件不存在时返回 `[]` 而非错误 |
@@ -247,6 +248,27 @@ users, _ := loader.Load(ctx, sources...)
 
 建议使用 `DefaultLoadOptions()` 再按需覆盖字段，以保证 `MaxFileSize` 等被正确设置。
 `MaxFileSize` 也会在读取 Redis 时用于大小校验。
+
+`MaxRetryDelay` 不像通常的零值那样"可省略"。http-kit 会把每个算出来的退避时间无条件
+夹到这个上限，因此上限为零意味着**每次重试都立即发生**——`RetryDelay` 和退避乘数看着
+像配好了、实际毫无作用，而一个失败的远程源会以网络允许的最快速度被反复请求。
+`NewLoader` 在它未设置时会填入 30s 默认值，所以只有你故意把它设成零才会踩到。
+
+`NewLoader` 和 `NewLoaderWithNormalize` 作用于你 `LoadOptions` 的**副本**，因此补默认值
+不会修改你传进去的那个结构体：
+
+```go
+opts := parserkit.DefaultLoadOptions()
+loader, err := parserkit.NewLoader[User](opts)
+
+// NewLoaderWithNormalize 会对每次成功加载的结果做后处理
+loader, err = parserkit.NewLoaderWithNormalize[User](opts, func(users []User) []User {
+    for i := range users {
+        users[i].Phone = strings.TrimSpace(users[i].Phone)
+    }
+    return users
+})
+```
 
 ## 错误处理
 
