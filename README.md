@@ -330,6 +330,14 @@ Test-only: `github.com/alicebob/miniredis/v2` for in-process Redis in tests.
 
 ## Upgrade Notes
 
+### v1.8.0
+
+Dependency refresh only. No API was removed and no call needs rewriting.
+
+- Test Redis is `miniredis` v2.39.0 (was v2.36.1).
+- Transitive `yuin/gopher-lua` is v1.1.2 (was v1.1.1), matching the other kits.
+- Still requires `http-kit` v1.5.0. That module had no newer published release.
+
 ### v1.7.0
 
 - **Remote retries back off again.** `FromRemote` never set `MaxRetryDelay`, and

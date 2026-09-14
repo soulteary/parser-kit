@@ -320,6 +320,14 @@ go tool cover -func=coverage.out
 
 ## 升级说明
 
+### v1.8.0
+
+仅升级依赖。没有删除任何 API，调用方无需改代码。
+
+- 测试用 Redis 为 `miniredis` v2.39.0（此前 v2.36.1）。
+- 间接依赖 `yuin/gopher-lua` 升至 v1.1.2（此前 v1.1.1），与其他 kit 对齐。
+- 仍依赖 `http-kit` v1.5.0。该模块没有更新的已发布版本。
+
 ### v1.7.0
 
 - **远程重试重新有了退避。** `FromRemote` 从未设置过 `MaxRetryDelay`，而 http-kit 会把
