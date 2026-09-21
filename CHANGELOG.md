@@ -6,11 +6,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Because Go encodes the major version in the import path, every major release
 also changes the module path. The current one is
-`github.com/soulteary/parser-kit/v2`.
+`github.com/soulteary/parser-kit/v3`.
 
 ## [Unreleased]
 
-## [2.1.0] — 2026-09-21
+## [3.0.0] — 2026-09-21
+
+### Changed — BREAKING
+
+- **`remotesource.WithClient` takes an http-kit v2 `*httpkit.Client`.** The
+  parameter type followed the dependency from `github.com/soulteary/http-kit`
+  to `github.com/soulteary/http-kit/v2`, which Go resolves as an unrelated
+  module: a caller holding a v1 client no longer compiles. Nothing else in the
+  exported API moved.
+
+  **The module path is therefore `github.com/soulteary/parser-kit/v3`.** This
+  release was first written up as 2.1.0, which a changed exported signature
+  cannot carry. It was never tagged — v2.0.0 is still the latest published
+  release — so relabelling it costs nothing, where shipping it inside `/v2`
+  would have left that path naming two incompatible `WithClient` signatures
+  for good.
+
+  | v2 | v3 |
+  |---|---|
+  | `import parserkit "github.com/soulteary/parser-kit/v2"` | `import parserkit "github.com/soulteary/parser-kit/v3"` |
+  | `import httpkit "github.com/soulteary/http-kit"` | `import httpkit "github.com/soulteary/http-kit/v2"` |
+  | `WithClient(c)` with a v1 `*httpkit.Client` | `WithClient(c)` with a v2 `*httpkit.Client` |
+
+  Every import inside this module, the README install and import examples and
+  the pkg.go.dev badges follow the path.
 
 ### Changed — BEHAVIOUR
 
@@ -50,10 +74,10 @@ also changes the module path. The current one is
 
 ### Dependencies
 
-- **http-kit v1.5.0 → v2.0.0.** Measured for a program importing
-  `parser-kit/v2/remotesource`, `-trimpath`, go1.27.0 linux/amd64:
+- **http-kit v1.5.0 → v2.0.0.** Measured for a program importing this
+  module's `remotesource`, `-trimpath`, go1.27.0 linux/amd64:
 
-  | | v2.0.0 | v2.1.0 |
+  | | v2.0.0 | v3.0.0 |
   |---|---|---|
   | modules in `go list -m all` | 24 | 17 |
   | `go.sum` lines | 23 | 6 |
@@ -262,5 +286,6 @@ import paths whether or not the change affects them.
   `go.mod`, and MVS still passes those minimums to anyone who imports the
   subpackages. What the split removes is the requirement for everyone else.
 
-[Unreleased]: https://github.com/soulteary/parser-kit/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/soulteary/parser-kit/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/soulteary/parser-kit/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/soulteary/parser-kit/compare/v1.8.0...v2.0.0

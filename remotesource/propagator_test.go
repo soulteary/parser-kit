@@ -9,8 +9,8 @@ import (
 
 	httpkit "github.com/soulteary/http-kit/v2"
 
-	parserkit "github.com/soulteary/parser-kit/v2"
-	"github.com/soulteary/parser-kit/v2/remotesource"
+	parserkit "github.com/soulteary/parser-kit/v3"
+	"github.com/soulteary/parser-kit/v3/remotesource"
 )
 
 // This package used to call otel.GetTextMapPropagator() on every fetch, so a

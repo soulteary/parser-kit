@@ -24,7 +24,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	parserkit "github.com/soulteary/parser-kit/v2"
+	parserkit "github.com/soulteary/parser-kit/v3"
 )
 
 // Getter is the part of a go-redis client this source uses. *redis.Client,

@@ -36,7 +36,7 @@ import (
 
 	httpkit "github.com/soulteary/http-kit/v2"
 
-	parserkit "github.com/soulteary/parser-kit/v2"
+	parserkit "github.com/soulteary/parser-kit/v3"
 )
 
 // DefaultTimeout bounds a single request when WithTimeout is not used.

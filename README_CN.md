@@ -1,6 +1,6 @@
 # Parser Kit
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/parser-kit/v2.svg)](https://pkg.go.dev/github.com/soulteary/parser-kit/v2)
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/parser-kit/v3.svg)](https://pkg.go.dev/github.com/soulteary/parser-kit/v3)
 [![Go Report Card](.github/goreportcard.svg)](.github/goreportcard-report.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/parser-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/parser-kit)
@@ -28,9 +28,9 @@
 
 | 包 | 内容 | 代价 |
 |---|---|---|
-| `parser-kit/v2` | 加载器、`File`、`BytesFetcher`、`Fetcher` | 仅标准库 |
-| `parser-kit/v2/redissource` | Redis 源 | `go-redis` |
-| `parser-kit/v2/remotesource` | HTTP 源 | `http-kit` |
+| `parser-kit/v3` | 加载器、`File`、`BytesFetcher`、`Fetcher` | 仅标准库 |
+| `parser-kit/v3/redissource` | Redis 源 | `go-redis` |
+| `parser-kit/v3/remotesource` | HTTP 源 | `http-kit/v2` |
 
 以「只从文件加载」的程序实测，v1.8.0 对比 v2.0.0：二进制从 9,699,758 字节降到
 3,952,636 字节，链接的包从 248 降到 78，它自己的 `go.sum` 从 20 个模块降到 2 个。
@@ -41,15 +41,15 @@
 
 - **Go 1.27+**（`go.mod` 声明 `go 1.27.0`）
 - `github.com/redis/go-redis/v9` —— 仅当你 import `redissource` 时
-- `github.com/soulteary/http-kit` —— 仅当你 import `remotesource` 时
+- `github.com/soulteary/http-kit/v2` —— 仅当你 import `remotesource` 时
 
 ## 安装
 
 ```bash
-go get github.com/soulteary/parser-kit/v2
+go get github.com/soulteary/parser-kit/v3
 ```
 
-从 v1 升级？所有人的 import 路径都会变，见[升级说明](#升级说明)。
+从 v1 或 v2 升级？所有人的 import 路径都会变，见[升级说明](#升级说明)。
 
 ## 使用
 
@@ -62,9 +62,9 @@ import (
     "context"
 
     "github.com/redis/go-redis/v9"
-    parserkit "github.com/soulteary/parser-kit/v2"
-    "github.com/soulteary/parser-kit/v2/redissource"
-    "github.com/soulteary/parser-kit/v2/remotesource"
+    parserkit "github.com/soulteary/parser-kit/v3"
+    "github.com/soulteary/parser-kit/v3/redissource"
+    "github.com/soulteary/parser-kit/v3/remotesource"
 )
 
 type User struct {
@@ -320,7 +320,8 @@ users, err := loader.Load(ctx, sources...)
 | `WithHeader(k, v)` | — | 额外的请求头，可多次使用 |
 | `WithUserAgent(ua)` | — | 这个源发出请求时的 `User-Agent` |
 | `WithInsecureSkipVerify()` | 关 | 跳过 TLS 校验（仅开发） |
-| `WithClient(c)` | — | 使用已有的 `*httpkit.Client`，不再自建 |
+| `WithClient(c)` | — | 使用已有的 http-kit v2 `*httpkit.Client`，不再自建 |
+| `WithPropagator(p)` | 无 | 给每个请求注入跨进程上下文——trace 头、baggage、request ID；OpenTelemetry 用 `otelprop.Global()` |
 
 `RetryDelay` 和 `MaxRetryDelay` 不像通常的零值那样「可省略」。http-kit 计算
 `RetryDelay × 2^attempt` 后会无条件夹到 `MaxRetryDelay`，所以**任何一个**字段为零
@@ -381,7 +382,7 @@ go tool cover -func=coverage.out
 根包除标准库外没有任何依赖。
 
 - `github.com/redis/go-redis/v9` —— `redissource` 使用
-- `github.com/soulteary/http-kit` —— `remotesource` 使用
+- `github.com/soulteary/http-kit/v2` —— `remotesource` 使用
 
 仅测试依赖：`github.com/alicebob/miniredis/v2`（内存 Redis）与
 `github.com/stretchr/testify`。
@@ -390,6 +391,47 @@ go tool cover -func=coverage.out
 版本传递给 import 了子包的人。这次拆分去掉的，是**其他所有人**的那份要求。
 
 ## 升级说明
+
+### v3.0.0
+
+**所有人的 import 路径都要改**，包括只读文件的程序——因为 Go 把主版本号编码在模块
+路径里：
+
+```go
+import parserkit "github.com/soulteary/parser-kit/v3"
+```
+
+`remotesource` 从 `http-kit` v1.5.0 换到了 `http-kit/v2` v2.0.0，因此
+**`remotesource.WithClient` 收的是 http-kit v2 的 `*httpkit.Client`。** Go 把
+http-kit 的两个路径当成互不相干的模块，所以手里拿着 v1 客户端的调用方不再能编译
+通过——同时，既 import `remotesource` 又 import `http-kit/v2` 的程序，也不会再
+链接两份同样的客户端。
+
+| v2 | v3 |
+|---|---|
+| `import parserkit "github.com/soulteary/parser-kit/v2"` | `import parserkit "github.com/soulteary/parser-kit/v3"` |
+| `import httpkit "github.com/soulteary/http-kit"` | `import httpkit "github.com/soulteary/http-kit/v2"` |
+| `WithClient(c)` 传 v1 的 `*httpkit.Client` | `WithClient(c)` 传 v2 的 `*httpkit.Client` |
+
+变的导出签名只有这一个。还有一处行为变化容易漏掉，因为它两边都能编译通过：
+
+- **`remotesource` 不再默认传播 trace context。** 在 http-kit v2 之前，这个包每次
+  fetch 都会调 `otel.GetTextMapPropagator()`，所以配了全局 OpenTelemetry
+  propagator 的服务不用开口就有 trace 头——同时每个 import `remotesource` 的服务
+  不管 trace 不 trace 都会链接 OpenTelemetry。**不会报任何错，请求只是不再带那些头
+  了。** 一行就能要回来：
+
+  ```go
+  import "github.com/soulteary/http-kit/v2/otelprop"
+
+  remotesource.New(url, remotesource.WithPropagator(otelprop.Global()))
+  ```
+
+  通过 `WithClient` 传入自己客户端的调用方从来不受这条影响，现在也一样：在那个
+  客户端的 `httpkit.Options` 上设 `Propagator` 即可。
+
+甩掉 OpenTelemetry 值多少钱见 [CHANGELOG.md](CHANGELOG.md)——对不 trace 的程序来说
+是 6 个模块、27 个链接的包。
 
 ### v2.0.0
 

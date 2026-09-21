@@ -1,6 +1,6 @@
 # Parser Kit
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/parser-kit/v2.svg)](https://pkg.go.dev/github.com/soulteary/parser-kit/v2)
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/parser-kit/v3.svg)](https://pkg.go.dev/github.com/soulteary/parser-kit/v3)
 [![Go Report Card](.github/goreportcard.svg)](.github/goreportcard-report.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/parser-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/parser-kit)
@@ -33,9 +33,9 @@ links only what it actually reads from:
 
 | Package | Contents | Cost |
 |---|---|---|
-| `parser-kit/v2` | the loader, `File`, `BytesFetcher`, `Fetcher` | standard library only |
-| `parser-kit/v2/redissource` | the Redis source | `go-redis` |
-| `parser-kit/v2/remotesource` | the HTTP source | `http-kit` |
+| `parser-kit/v3` | the loader, `File`, `BytesFetcher`, `Fetcher` | standard library only |
+| `parser-kit/v3/redissource` | the Redis source | `go-redis` |
+| `parser-kit/v3/remotesource` | the HTTP source | `http-kit/v2` |
 
 Measured for a program that loads from a file, v1.8.0 against v2.0.0: the
 binary goes from 9,699,758 to 3,952,636 bytes, linked packages from 248 to 78,
@@ -47,15 +47,15 @@ what the split costs a program that does use all three sources.
 
 - **Go 1.27+** (`go.mod` declares `go 1.27.0`)
 - `github.com/redis/go-redis/v9` — only if you import `redissource`
-- `github.com/soulteary/http-kit` — only if you import `remotesource`
+- `github.com/soulteary/http-kit/v2` — only if you import `remotesource`
 
 ## Installation
 
 ```bash
-go get github.com/soulteary/parser-kit/v2
+go get github.com/soulteary/parser-kit/v3
 ```
 
-Upgrading from v1? The import path changes for everyone; see
+Upgrading from v1 or v2? The import path changes for everyone; see
 [Upgrade Notes](#upgrade-notes).
 
 ## Usage
@@ -69,9 +69,9 @@ import (
     "context"
 
     "github.com/redis/go-redis/v9"
-    parserkit "github.com/soulteary/parser-kit/v2"
-    "github.com/soulteary/parser-kit/v2/redissource"
-    "github.com/soulteary/parser-kit/v2/remotesource"
+    parserkit "github.com/soulteary/parser-kit/v3"
+    "github.com/soulteary/parser-kit/v3/redissource"
+    "github.com/soulteary/parser-kit/v3/remotesource"
 )
 
 type User struct {
@@ -339,7 +339,8 @@ call site rather than an error returned from `NewLoader`.
 | `WithHeader(k, v)` | — | Extra request header; may be repeated |
 | `WithUserAgent(ua)` | — | `User-Agent` for this source's requests |
 | `WithInsecureSkipVerify()` | off | Skip TLS verification (dev only) |
-| `WithClient(c)` | — | Use an existing `*httpkit.Client` instead of building one |
+| `WithClient(c)` | — | Use an existing http-kit v2 `*httpkit.Client` instead of building one |
+| `WithPropagator(p)` | none | Inject cross-process context — trace headers, baggage, a request ID — into every request; `otelprop.Global()` for OpenTelemetry |
 
 `RetryDelay` and `MaxRetryDelay` are not optional in the way a zero value
 usually is. http-kit computes `RetryDelay × 2^attempt` and clamps the result to
@@ -405,7 +406,7 @@ go tool cover -func=coverage.out
 The root package has none beyond the standard library.
 
 - `github.com/redis/go-redis/v9` — used by `redissource`
-- `github.com/soulteary/http-kit` — used by `remotesource`
+- `github.com/soulteary/http-kit/v2` — used by `remotesource`
 
 Test-only: `github.com/alicebob/miniredis/v2` for in-process Redis, and
 `github.com/stretchr/testify`.
@@ -415,6 +416,49 @@ and minimum version selection still passes those minimums to anyone who imports
 the subpackages. What the split removes is the requirement for everyone else.
 
 ## Upgrade Notes
+
+### v3.0.0
+
+**The import path changes for every user**, including programs that only read
+files, because Go encodes the major version in the module path:
+
+```go
+import parserkit "github.com/soulteary/parser-kit/v3"
+```
+
+`remotesource` moved from `http-kit` v1.5.0 to `http-kit/v2` v2.0.0, so
+**`remotesource.WithClient` takes an http-kit v2 `*httpkit.Client`.** Go
+resolves the two http-kit paths as unrelated modules, so a caller holding a v1
+client no longer compiles — and a program that imported `remotesource`
+alongside `http-kit/v2` no longer links two copies of the same client.
+
+| v2 | v3 |
+|---|---|
+| `import parserkit "github.com/soulteary/parser-kit/v2"` | `import parserkit "github.com/soulteary/parser-kit/v3"` |
+| `import httpkit "github.com/soulteary/http-kit"` | `import httpkit "github.com/soulteary/http-kit/v2"` |
+| `WithClient(c)` with a v1 `*httpkit.Client` | `WithClient(c)` with a v2 `*httpkit.Client` |
+
+That is the only exported signature that changed. The one behaviour change is
+easy to miss, because it compiles either way:
+
+- **`remotesource` no longer propagates trace context unless asked.** Until
+  http-kit v2 this package called `otel.GetTextMapPropagator()` on every fetch,
+  so a service with a global OpenTelemetry propagator got trace headers without
+  asking — and every service importing `remotesource` linked OpenTelemetry
+  whether it traced or not. **Nothing errors; the fetches simply stop carrying
+  the headers.** One line brings it back:
+
+  ```go
+  import "github.com/soulteary/http-kit/v2/otelprop"
+
+  remotesource.New(url, remotesource.WithPropagator(otelprop.Global()))
+  ```
+
+  A caller supplying its own client through `WithClient` was never affected and
+  still is not: it sets `Propagator` on that client's `httpkit.Options`.
+
+See [CHANGELOG.md](CHANGELOG.md) for what the split off OpenTelemetry is worth
+— six modules and 27 linked packages for a program that does not trace.
 
 ### v2.0.0
 

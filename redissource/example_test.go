@@ -7,8 +7,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	parserkit "github.com/soulteary/parser-kit/v2"
-	"github.com/soulteary/parser-kit/v2/redissource"
+	parserkit "github.com/soulteary/parser-kit/v3"
+	"github.com/soulteary/parser-kit/v3/redissource"
 )
 
 type Rule struct {
