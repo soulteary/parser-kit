@@ -2,203 +2,105 @@ package parserkit
 
 import (
 	"context"
-	"errors"
 	"math"
-	"net/http"
-	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// TestOversizedSourceIsDistinguishable: io.LimitReader truncates silently, so
-// an oversized file used to surface as a JSON parse error with no way to tell
-// "too large" from "malformed".
+// An oversized source must be distinguishable from a malformed one.
+//
+// io.LimitReader truncates silently, so before v1.6.0 a file larger than the
+// limit came back as "failed to parse JSON" -- the same error as genuinely
+// broken content, with no way to tell which had happened.
 func TestOversizedSourceIsDistinguishable(t *testing.T) {
-	f, err := os.CreateTemp(t.TempDir(), "big-*.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Valid JSON, just over the limit we will configure.
-	payload := `[{"id":"1","email":"` + strings.Repeat("a", 300) + `@b.com","phone":"1"}]`
-	if _, err := f.WriteString(payload); err != nil {
-		t.Fatal(err)
-	}
-	_ = f.Close()
+	path := writeFile(t, "users.json", `[{"id":"1","email":"user@example.com"}]`)
 
-	loader, err := NewLoader[TestUser](&LoadOptions{MaxFileSize: 64})
-	if err != nil {
-		t.Fatal(err)
-	}
+	l := newTestLoader(t, &LoadOptions[TestUser]{MaxBytes: 8})
+	_, err := l.LoadOne(context.Background(), File(path))
 
-	_, err = loader.FromFile(context.Background(), f.Name())
-	if err == nil {
-		t.Fatal("FromFile on an oversized file returned nil error")
-	}
-	if !errors.Is(err, ErrSourceTooLarge) {
-		t.Errorf("FromFile error = %v, want it to wrap ErrSourceTooLarge rather than look like malformed JSON", err)
-	}
-
-	// A file inside the limit still loads.
-	small, err := os.CreateTemp(t.TempDir(), "small-*.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := small.WriteString(`[{"id":"1","email":"a@b.com","phone":"1"}]`); err != nil {
-		t.Fatal(err)
-	}
-	_ = small.Close()
-
-	users, err := loader.FromFile(context.Background(), small.Name())
-	if err != nil {
-		t.Fatalf("FromFile on a small file error = %v", err)
-	}
-	if len(users) != 1 {
-		t.Errorf("loaded %d users, want 1", len(users))
-	}
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrSourceTooLarge)
+	assert.NotContains(t, err.Error(), "failed to parse JSON")
 }
 
-func TestOversizedRemoteIsDistinguishable(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"id":"1","email":"` + strings.Repeat("a", 300) + `@b.com","phone":"1"}]`))
-	}))
-	defer srv.Close()
-
-	loader, err := NewLoader[TestUser](&LoadOptions{MaxFileSize: 64})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := loader.FromRemote(context.Background(), srv.URL, ""); !errors.Is(err, ErrSourceTooLarge) {
-		t.Errorf("FromRemote error = %v, want it to wrap ErrSourceTooLarge", err)
-	}
-}
-
-// TestSourceOrderIsStable: sort.Slice is not stable, so two sources sharing a
-// priority took an arbitrary order that could differ between runs.
+// Sources sharing a priority must keep the order they were passed in.
+// sort.Slice is not stable, so identical input could order differently
+// between runs.
 func TestSourceOrderIsStable(t *testing.T) {
-	dir := t.TempDir()
-	write := func(name, body string) string {
-		path := dir + "/" + name
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return path
+	l := newTestLoader(t, nil)
+
+	sources := []Source{
+		At(0, failingFetcher{err: assertError("first")}),
+		At(0, BytesFetcher(`[{"id":"second"}]`)),
+		At(0, BytesFetcher(`[{"id":"third"}]`)),
 	}
 
-	first := write("a.json", `[{"id":"first","email":"a@b.com","phone":"1"}]`)
-	second := write("b.json", `[{"id":"second","email":"c@d.com","phone":"2"}]`)
-
-	loader, err := NewLoader[TestUser](nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Both sources share priority 1; the first listed must always win.
-	for i := 0; i < 50; i++ {
-		users, err := loader.Load(context.Background(),
-			Source{Type: SourceTypeFile, Priority: 1, Config: SourceConfig{FilePath: first}},
-			Source{Type: SourceTypeFile, Priority: 1, Config: SourceConfig{FilePath: second}},
-		)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(users) == 0 || users[0].ID != "first" {
-			t.Fatalf("iteration %d returned %v; equal priorities are not resolved stably", i, users)
-		}
+	for range 50 {
+		users, err := l.Load(context.Background(), sources...)
+		require.NoError(t, err)
+		require.Len(t, users, 1)
+		require.Equal(t, "second", users[0].ID)
 	}
 }
 
-// TestNewLoaderDoesNotMutateOptions: defaults were written back into the
-// caller's struct, which surprises anyone reusing or sharing it.
+type assertError string
+
+func (e assertError) Error() string { return string(e) }
+
+// NewLoader must not write its defaults back into the caller's struct.
 func TestNewLoaderDoesNotMutateOptions(t *testing.T) {
-	opts := &LoadOptions{}
-	if _, err := NewLoader[TestUser](opts); err != nil {
-		t.Fatal(err)
-	}
-	if opts.MaxFileSize != 0 || opts.LoadStrategy != "" {
-		t.Errorf("NewLoader mutated the caller's options: %+v", opts)
-	}
+	opts := &LoadOptions[TestUser]{}
+	_, err := NewLoader[TestUser](opts)
+	require.NoError(t, err)
+
+	assert.Zero(t, opts.MaxBytes, "MaxBytes was written back into the caller's struct")
+	assert.Empty(t, opts.LoadStrategy, "LoadStrategy was written back into the caller's struct")
 }
 
-// --- Codex review follow-ups (PR #3) ---
+// MaxBytes: math.MaxInt64 is the natural way to say "no limit". The one-byte
+// overrun margin used to wrap to math.MinInt64, so io.LimitReader returned EOF
+// immediately and every source -- however small -- came back as malformed JSON.
+func TestMaxBytesMaxInt64DoesNotOverflow(t *testing.T) {
+	path := writeFile(t, "users.json", `[{"id":"1","email":"user@example.com"}]`)
 
-// TestMaxFileSizeMaxInt64DoesNotOverflow is the regression test for the
-// one-byte overrun margin: MaxFileSize + 1 wraps to math.MinInt64 when a
-// caller passes math.MaxInt64 to mean "no limit", and io.LimitReader with a
-// negative budget returns EOF immediately, so every file -- however small --
-// came back as malformed JSON.
-func TestMaxFileSizeMaxInt64DoesNotOverflow(t *testing.T) {
-	if got := readLimit(math.MaxInt64); got != math.MaxInt64 {
-		t.Errorf("readLimit(MaxInt64) = %d, want MaxInt64 (it must saturate, not wrap)", got)
-	}
-	if got := readLimit(64); got != 65 {
-		t.Errorf("readLimit(64) = %d, want 65", got)
-	}
+	l := newTestLoader(t, &LoadOptions[TestUser]{MaxBytes: math.MaxInt64})
 
-	f, err := os.CreateTemp(t.TempDir(), "unlimited-*.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.WriteString(`[{"id":"1","email":"a@b.com","phone":"1"}]`); err != nil {
-		t.Fatal(err)
-	}
-	_ = f.Close()
+	users, err := l.LoadOne(context.Background(), File(path))
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+	assert.Equal(t, "user@example.com", users[0].Email)
 
-	loader, err := NewLoader[TestUser](&LoadOptions{MaxFileSize: math.MaxInt64})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	users, err := loader.FromFile(context.Background(), f.Name())
-	if err != nil {
-		t.Fatalf("FromFile with MaxFileSize=MaxInt64 error = %v, want the file to load", err)
-	}
-	if len(users) != 1 {
-		t.Errorf("loaded %d users, want 1", len(users))
-	}
-
-	// Same overflow on the remote path.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[{"id":"2","email":"c@d.com","phone":"2"}]`))
-	}))
-	defer srv.Close()
-
-	users, err = loader.FromRemote(context.Background(), srv.URL, "")
-	if err != nil {
-		t.Fatalf("FromRemote with MaxFileSize=MaxInt64 error = %v, want the body to load", err)
-	}
-	if len(users) != 1 {
-		t.Errorf("loaded %d users from remote, want 1", len(users))
-	}
+	// And through Load, with an in-memory source too.
+	users, err = l.Load(context.Background(), At(0, BytesFetcher(`[{"id":"2"}]`)))
+	require.NoError(t, err)
+	require.Len(t, users, 1)
 }
 
-// TestRedisOversizeWrapsSentinel: the Redis path reported an oversized value
-// with a plain formatted error, so errors.Is(err, ErrSourceTooLarge) was false
-// and callers could not classify the condition the way they can for the file
-// and remote paths.
-func TestRedisOversizeWrapsSentinel(t *testing.T) {
-	srv := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: srv.Addr()})
-	defer func() { _ = client.Close() }()
+// The read limit is a budget, not a target: a source at exactly the limit is
+// fine, one byte over is not.
+func TestLimitBoundaryIsExact(t *testing.T) {
+	payload := `[{"id":"1"}]`
+	size := int64(len(payload))
 
-	if err := client.Set(context.Background(), "users", strings.Repeat("x", 512), 0).Err(); err != nil {
-		t.Fatal(err)
-	}
+	l := newTestLoader(t, &LoadOptions[TestUser]{MaxBytes: size})
+	users, err := l.LoadOne(context.Background(), BytesFetcher(payload))
+	require.NoError(t, err)
+	require.Len(t, users, 1)
 
-	loader, err := NewLoader[TestUser](&LoadOptions{MaxFileSize: 64})
-	if err != nil {
-		t.Fatal(err)
-	}
+	l = newTestLoader(t, &LoadOptions[TestUser]{MaxBytes: size - 1})
+	_, err = l.LoadOne(context.Background(), BytesFetcher(payload))
+	assert.ErrorIs(t, err, ErrSourceTooLarge)
+}
 
-	_, err = loader.FromRedis(context.Background(), client, "users")
-	if err == nil {
-		t.Fatal("FromRedis on an oversized value returned nil error")
-	}
-	if !errors.Is(err, ErrSourceTooLarge) {
-		t.Errorf("FromRedis error = %v, want it to wrap ErrSourceTooLarge like the file and remote paths", err)
-	}
+// A source that is under the limit but whose content is broken still reports
+// as broken, not as too large.
+func TestMalformedStaysMalformed(t *testing.T) {
+	l := newTestLoader(t, &LoadOptions[TestUser]{MaxBytes: 1024})
+	_, err := l.LoadOne(context.Background(), BytesFetcher(strings.Repeat("[", 4)))
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrSourceTooLarge)
+	assert.Contains(t, err.Error(), "failed to parse JSON")
 }

@@ -1,33 +1,62 @@
 # Parser Kit
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/parser-kit.svg)](https://pkg.go.dev/github.com/soulteary/parser-kit)
+[![Go Reference](https://pkg.go.dev/badge/github.com/soulteary/parser-kit/v2.svg)](https://pkg.go.dev/github.com/soulteary/parser-kit/v2)
 [![Go Report Card](.github/goreportcard.svg)](.github/goreportcard-report.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/soulteary/parser-kit/graph/badge.svg)](https://codecov.io/gh/soulteary/parser-kit)
 
 [中文文档](README_CN.md)
 
-A generic data loader kit that supports loading data from multiple sources (file, Redis, remote HTTP) with priority-based fallback strategy.
+A generic data loader that reads a JSON list from several sources — a local
+file, Redis, an HTTP endpoint — in priority order, with fallback or merge
+semantics.
 
 ## Features
 
-- **Multi-source support**: Load data from local files, Redis, or remote HTTP endpoints
-- **Priority-based fallback**: Automatically fallback to next source if previous one fails
-- **Generic design**: Works with any JSON-serializable type
-- **HTTP retry mechanism**: Automatic retry with exponential backoff for remote requests
-- **Size limits**: Protection against memory exhaustion attacks (file/remote; Redis uses MaxFileSize with a size check)
-- **Normalization support**: Optional data normalization after parsing
+- **Multi-source support**: local files, Redis and remote HTTP endpoints, plus
+  anything else you write a `Fetcher` for
+- **Priority-based fallback**: fall through to the next source when one fails
+- **Merge strategy**: combine every source that answered, deduplicated by key
+- **Generic design**: works with any JSON-serializable type, and `LoadOptions[T]`
+  makes `KeyFunc` a compile-time concern
+- **You link what you load**: the root package depends on nothing outside the
+  standard library
+- **Size limits**: every source is bounded, and an overrun is reported as
+  `ErrSourceTooLarge` rather than as malformed JSON
+- **HTTP retry**: exponential backoff with jitter for remote sources
+- **Normalization support**: optional post-parse normalization
+
+## Layout
+
+Everything that needs a third-party client lives in a subpackage, so a program
+links only what it actually reads from:
+
+| Package | Contents | Cost |
+|---|---|---|
+| `parser-kit/v2` | the loader, `File`, `BytesFetcher`, `Fetcher` | standard library only |
+| `parser-kit/v2/redissource` | the Redis source | `go-redis` |
+| `parser-kit/v2/remotesource` | the HTTP source | `http-kit` (and OpenTelemetry) |
+
+Measured for a program that loads from a file, v1.8.0 against v2.0.0: the
+binary goes from 9,699,758 to 3,952,636 bytes, linked packages from 248 to 78,
+and its `go.sum` from 20 modules to 2. See
+[CHANGELOG.md](CHANGELOG.md#200--2026-09-21) for the full table, including
+what the split costs a program that does use all three sources.
 
 ## Requirements
 
 - **Go 1.27+** (`go.mod` declares `go 1.27.0`)
-- `github.com/redis/go-redis/v9` for the Redis source
+- `github.com/redis/go-redis/v9` — only if you import `redissource`
+- `github.com/soulteary/http-kit` — only if you import `remotesource`
 
 ## Installation
 
 ```bash
-go get github.com/soulteary/parser-kit
+go get github.com/soulteary/parser-kit/v2
 ```
+
+Upgrading from v1? The import path changes for everyone; see
+[Upgrade Notes](#upgrade-notes).
 
 ## Usage
 
@@ -38,8 +67,11 @@ package main
 
 import (
     "context"
-    "github.com/soulteary/parser-kit"
-    "github.com/soulteary/redis-kit/client"
+
+    "github.com/redis/go-redis/v9"
+    parserkit "github.com/soulteary/parser-kit/v2"
+    "github.com/soulteary/parser-kit/v2/redissource"
+    "github.com/soulteary/parser-kit/v2/remotesource"
 )
 
 type User struct {
@@ -49,142 +81,154 @@ type User struct {
 }
 
 func main() {
-    // Create loader
     loader, err := parserkit.NewLoader[User](nil)
     if err != nil {
         panic(err)
     }
 
-    // Define sources with priority (lower number = higher priority)
-    sources := []parserkit.Source{
-        {
-            Type:     parserkit.SourceTypeRedis,
-            Priority: 0, // Highest priority
-            Config: parserkit.SourceConfig{
-                RedisKey:    "users:cache",
-                RedisClient: redisClient, // *redis.Client
-            },
-        },
-        {
-            Type:     parserkit.SourceTypeRemote,
-            Priority: 1,
-            Config: parserkit.SourceConfig{
-                RemoteURL:           "https://api.example.com/users",
-                AuthorizationHeader: "Bearer token",
-            },
-        },
-        {
-            Type:     parserkit.SourceTypeFile,
-            Priority: 2, // Lowest priority (fallback)
-            Config: parserkit.SourceConfig{
-                FilePath: "/path/to/users.json",
-            },
-        },
-    }
+    rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 
-    // Load data (will try Redis first, then remote, then file)
-    ctx := context.Background()
-    users, err := loader.Load(ctx, sources...)
+    remote, err := remotesource.New("https://api.example.com/users",
+        remotesource.WithAuthorization("Bearer token"),
+    )
     if err != nil {
         panic(err)
     }
 
-    // Use users...
+    // Lower priority number = tried first.
+    users, err := loader.Load(context.Background(),
+        parserkit.At(0, redissource.New(rdb, "users:cache")),
+        parserkit.At(1, remote),
+        parserkit.At(2, parserkit.File("/path/to/users.json")),
+    )
+    if err != nil {
+        panic(err)
+    }
+
+    _ = users
 }
+```
+
+A program with no Redis and no remote endpoint imports neither subpackage, and
+links neither dependency:
+
+```go
+loader, _ := parserkit.NewLoader[User](nil)
+users, err := loader.Load(ctx,
+    parserkit.At(0, parserkit.File("/etc/app/users.json")),
+    parserkit.At(1, parserkit.BytesFetcher(builtinDefaults)),
+)
 ```
 
 ### Individual Source Loading
 
 ```go
-// Load from file
-users, err := loader.FromFile(ctx, "/path/to/users.json")
-
-// Load from remote
-users, err := loader.FromRemote(ctx, "https://api.example.com/users", "Bearer token")
-
-// Load from Redis
-users, err := loader.FromRedis(ctx, redisClient, "users:cache")
+users, err := loader.LoadOne(ctx, parserkit.File("/path/to/users.json"))
+users, err := loader.LoadOne(ctx, redissource.New(rdb, "users:cache"))
+users, err := loader.LoadOne(ctx, remote)
 ```
 
 ### Custom Options
 
 ```go
-opts := &parserkit.LoadOptions{
-    MaxFileSize:  20 * 1024 * 1024, // 20MB
-    MaxRetries:   5,
-    RetryDelay:   2 * time.Second,
-    HTTPTimeout:  10 * time.Second,
+opts := &parserkit.LoadOptions[User]{
+    MaxBytes:       20 * 1024 * 1024, // 20MB
+    AllowEmptyData: true,
 }
 
-normalizeFunc := func(users []User) []User {
-    // Normalize data after parsing
+loader, err := parserkit.NewLoaderWithNormalize[User](opts, func(users []User) []User {
     for i := range users {
-        // Apply normalization logic
+        users[i].Phone = strings.TrimSpace(users[i].Phone)
     }
     return users
-}
-
-loader, err := parserkit.NewLoaderWithNormalize[User](opts, normalizeFunc)
+})
 ```
 
-## Source Types
+Timeouts, retries and TLS belong to the source that has them, so they are
+options on that source rather than on the loader:
+
+```go
+remote, err := remotesource.New("https://api.example.com/users",
+    remotesource.WithTimeout(10*time.Second),
+    remotesource.WithRetry(remotesource.RetryPolicy{
+        MaxRetries:    5,
+        RetryDelay:    2 * time.Second,
+        MaxRetryDelay: 30 * time.Second,
+    }),
+)
+```
+
+## Sources
 
 ### File Source
 
-Loads data from a local JSON file.
-
 ```go
-{
-    Type: parserkit.SourceTypeFile,
-    Priority: 2,
-    Config: parserkit.SourceConfig{
-        FilePath: "/path/to/data.json",
-    },
-}
+parserkit.At(2, parserkit.File("/path/to/data.json"))
+
+// A file that does not exist is an absent source rather than an error, so the
+// loader moves on to the next one:
+parserkit.At(2, parserkit.File("/path/to/data.json").AllowMissing())
 ```
 
 ### Redis Source
 
-Loads data from a Redis key (must contain JSON).
+Reads a Redis key holding JSON. The size is checked with `STRLEN` before the
+value is read, so an oversized value is refused rather than pulled into memory.
 
 ```go
-{
-    Type: parserkit.SourceTypeRedis,
-    Priority: 0,
-    Config: parserkit.SourceConfig{
-        RedisKey:    "data:cache",
-        RedisClient: redisClient, // *redis.Client from redis-kit
-    },
+parserkit.At(0, redissource.New(rdb, "data:cache"))
+parserkit.At(0, redissource.New(rdb, "data:cache").AllowMissing())
+```
+
+`redissource.New` takes a `redissource.Getter` — the two commands the source
+issues — not a concrete client:
+
+```go
+type Getter interface {
+    Get(ctx context.Context, key string) *redis.StringCmd
+    StrLen(ctx context.Context, key string) *redis.IntCmd
 }
 ```
+
+`*redis.Client`, `*redis.ClusterClient`, `*redis.Ring` and
+`redis.UniversalClient` all satisfy it, so a cluster or Sentinel deployment
+works with the same source. A nil client — including a nil `*redis.Client`
+stored in the interface, which would otherwise panic — is reported as
+`redissource.ErrClientNil`.
 
 ### Remote Source
 
-Loads data from a remote HTTP/HTTPS endpoint.
-Make sure `RemoteURL` is trusted or validated by the caller to avoid SSRF.
+```go
+remote, err := remotesource.New("https://api.example.com/data",
+    remotesource.WithAuthorization("Bearer token"),
+    remotesource.WithHeader("X-Tenant", "acme"),
+    remotesource.WithTimeout(5*time.Second),
+)
+```
+
+Each `remotesource.Fetcher` builds its own HTTP client. To share one connection
+pool across several remote sources — or to bring your own mTLS, proxy or
+transport configuration — build the client once and pass it in:
 
 ```go
-{
-    Type: parserkit.SourceTypeRemote,
-    Priority: 1,
-    Config: parserkit.SourceConfig{
-        RemoteURL:           "https://api.example.com/data",
-        AuthorizationHeader: "Bearer token", // Optional
-        Timeout:             5 * time.Second, // Optional, uses default if not set
-    },
-}
-// Note: InsecureSkipVerify is set in LoadOptions at loader creation, not per source.
+client, err := httpkit.NewClient(&httpkit.Options{
+    BaseURL: "https://api.example.com",
+    Timeout: 5 * time.Second,
+})
+a, _ := remotesource.New("https://api.example.com/users", remotesource.WithClient(client))
+b, _ := remotesource.New("https://api.example.com/groups", remotesource.WithClient(client))
 ```
-> Note: `InsecureSkipVerify` is applied at loader creation time via `LoadOptions`. Per-source values are ignored; create separate loaders if you need different TLS behavior per source.
 
 ### Security note for remote sources
 
-`FromRemote` uses the URL **as given** and sends `auth` as an `Authorization`
-header, with no validation. A caller-controlled URL therefore makes it an SSRF
-primitive that forwards your credentials to wherever the URL points.
+`remotesource` uses the URL **as given** and sends the value from
+`WithAuthorization` as an `Authorization` header. `New` checks that the URL is
+an absolute `http` or `https` URL and nothing more, so a caller-controlled URL
+still makes this an SSRF primitive that forwards your credentials to wherever
+the URL points.
 
-Validate the URL before passing it in, and close the DNS-rebinding window on the
-dial:
+Validate the URL before passing it in, and close the DNS-rebinding window on
+the dial:
 
 ```go
 import "github.com/soulteary/cli-kit/validator"
@@ -193,111 +237,144 @@ opts := &validator.URLOptions{AllowedSchemes: []string{"https"}}
 if err := validator.ValidateURL(remoteURL, opts); err != nil {
     return err
 }
-// and use validator.SSRFDialControl(opts) on the transport that fetches it
+// and use validator.SSRFDialControl(opts) on the transport that fetches it,
+// passed in with remotesource.WithClient
 ```
 
-`InsecureSkipVerify` disables TLS verification entirely — development only.
+`remotesource.WithInsecureSkipVerify()` disables TLS verification entirely —
+development only.
+
+### Writing your own source
+
+A source is anything with a `Fetch` method. `ReadLimited` enforces the byte
+budget the way the built-in sources do — it reads one byte past the limit, so
+an oversized source is reported as `ErrSourceTooLarge` instead of being
+silently truncated into a JSON syntax error.
+
+```go
+type s3Source struct {
+    bucket, key string
+    client      *s3.Client
+}
+
+func (s s3Source) Fetch(ctx context.Context, maxBytes int64) ([]byte, error) {
+    out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+        Bucket: &s.bucket, Key: &s.key,
+    })
+    if err != nil {
+        return nil, err
+    }
+    defer out.Body.Close()
+
+    raw, err := parserkit.ReadLimited(out.Body, maxBytes)
+    if err != nil {
+        return nil, fmt.Errorf("s3://%s/%s: %w", s.bucket, s.key, err)
+    }
+    return raw, nil
+}
+
+users, err := loader.Load(ctx, parserkit.At(0, s3Source{...}))
+```
+
+Returning no bytes and no error means the source is absent; the loader reads
+that as an empty result, which `AllowEmptyData` then governs.
 
 ## Priority System
 
 Sources are processed in priority order:
+
 - Lower priority number = higher priority
 - Priority 0 is the highest priority
 - If a source fails, the loader automatically tries the next source
-- Behavior depends on LoadStrategy (see below)
+- Behavior depends on `LoadStrategy` (see below)
 
 Sorting is **stable**, so two sources sharing a priority keep the order you
 passed them in — the same input always produces the same order.
 
 ## Load Strategy
 
-Two strategies control how data from multiple sources is combined:
-
 ### Fallback (default)
 
-`LoadStrategyFallback`: Returns data from the **first successful** source. Use for cache → remote → file style loading.
+`LoadStrategyFallback`: returns data from the **first successful** source. Use
+it for cache → remote → file style loading.
 
 ### Merge
 
-`LoadStrategyMerge`: **Merges** data from all successful sources with deduplication. Use when you need "remote + local supplement" (e.g. Warden's REMOTE_FIRST). Requires `KeyFunc` to extract a unique key per item.
+`LoadStrategyMerge`: **merges** data from every successful source, deduplicated
+by `KeyFunc`. The first source to define a key fixes its position; a later one
+replaces its value.
 
 ```go
-keyFunc := func(u User) (string, bool) { return u.Phone, true } // key, include
-opts := parserkit.DefaultLoadOptions()
+opts := parserkit.DefaultLoadOptions[User]()
 opts.LoadStrategy = parserkit.LoadStrategyMerge
-opts.KeyFunc = keyFunc
-loader, _ := parserkit.NewLoader[User](opts)
+opts.KeyFunc = func(u User) (string, bool) { return u.Phone, u.Phone != "" } // key, include
 
-// Load merges file1 + file2; same key overwrites (later source wins)
-users, _ := loader.Load(ctx, sources...)
+loader, err := parserkit.NewLoader[User](opts)
+users, err := loader.Load(ctx, sources...)
 ```
+
+`KeyFunc` is `KeyFunc[T]`, so a mismatched signature is a compile error at the
+call site rather than an error returned from `NewLoader`.
 
 ## Options Reference
 
+### `LoadOptions[T]`
+
 | Option | Default | Description |
 |--------|---------|-------------|
-| `MaxFileSize` | 10MB | Max bytes to read from file/response |
-| `MaxRetries` | 3 | Retries for remote requests |
-| `RetryDelay` | 1s | Base delay between retries |
-| `MaxRetryDelay` | 30s | Ceiling on the retry backoff. **Must be positive** — see below |
-| `HTTPTimeout` | 5s | Timeout for remote requests |
-| `InsecureSkipVerify` | false | Skip TLS verification (dev only) |
-| `AllowEmptyFile` | false | Return `[]` when file not found instead of error |
-| `AllowEmptyData` | false | When false, treat empty source as failure and try next |
+| `MaxBytes` | 10MB | Max bytes any single source may return |
+| `AllowEmptyData` | false | When false, treat an empty source as a failure and try the next |
 | `LoadStrategy` | `fallback` | `fallback` or `merge` |
 | `KeyFunc` | nil | Required for `merge`; `func(T) (string, bool)` |
 
-`MaxRetryDelay` is not optional in the way a zero value usually is. http-kit
-clamps every computed backoff to it unconditionally, so a zero ceiling means
-**every retry fires immediately** — `RetryDelay` and the backoff multiplier look
-configured and do nothing, and a failing remote source is retried as fast as the
-network allows. `NewLoader` fills the 30s default when it is unset, so this only
-bites if you set it to zero on purpose.
+### `remotesource` options
 
-Use `DefaultLoadOptions()` and override the fields you need, so `MaxFileSize` and
-similar are set rather than zero. `MaxFileSize` also guards the Redis value size
-(checked with `STRLEN` before loading).
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WithTimeout(d)` | 5s | Bounds one request, retries included |
+| `WithRetry(RetryPolicy{MaxRetries})` | 3 | Retries after a failed request |
+| `WithRetry(RetryPolicy{RetryDelay})` | 1s | Delay before the first retry; doubles from there. **Must be positive** — see below |
+| `WithRetry(RetryPolicy{MaxRetryDelay})` | 30s | Ceiling on the backoff. **Must be positive** — see below |
+| `WithAuthorization(v)` | — | `Authorization` header, used verbatim |
+| `WithHeader(k, v)` | — | Extra request header; may be repeated |
+| `WithUserAgent(ua)` | — | `User-Agent` for this source's requests |
+| `WithInsecureSkipVerify()` | off | Skip TLS verification (dev only) |
+| `WithClient(c)` | — | Use an existing `*httpkit.Client` instead of building one |
+
+`RetryDelay` and `MaxRetryDelay` are not optional in the way a zero value
+usually is. http-kit computes `RetryDelay × 2^attempt` and clamps the result to
+`MaxRetryDelay` unconditionally, so a zero in **either** field means every retry
+fires immediately and a failing remote source is retried as fast as the network
+allows. `New` replaces a non-positive value in either field with its default,
+which is why `WithRetry(RetryPolicy{MaxRetries: 5})` is safe to write.
 
 `NewLoader` and `NewLoaderWithNormalize` work on a **copy** of your
-`LoadOptions`, so filling in defaults does not mutate the struct you passed:
-
-```go
-opts := parserkit.DefaultLoadOptions()
-loader, err := parserkit.NewLoader[User](opts)
-
-// NewLoaderWithNormalize post-processes every successful load
-loader, err = parserkit.NewLoaderWithNormalize[User](opts, func(users []User) []User {
-    for i := range users {
-        users[i].Phone = strings.TrimSpace(users[i].Phone)
-    }
-    return users
-})
-```
+`LoadOptions`, so filling in defaults does not mutate the struct you passed.
 
 ## Error Handling
 
-- If every source fails, `Load()` returns an error carrying the last one
-  encountered.
-- The individual source methods (`FromFile`, `FromRemote`, `FromRedis`) return
-  their error immediately.
-- File not found is an error by default; `AllowEmptyFile: true` returns `[]`.
+- If every source fails, `Load` returns an error carrying the last one.
+- `LoadOne` returns its source's error directly.
+- A `Source` with no `Fetcher` reports `ErrNoFetcher`.
+- A missing file or Redis key is an error by default; `AllowMissing()` on that
+  source makes it an absent source instead, and the loader moves on.
 
 ### Oversized sources
 
-A source larger than `MaxFileSize` fails with `ErrSourceTooLarge`, from all three
-source types:
+A source larger than `MaxBytes` fails with `ErrSourceTooLarge`, from every
+source type:
 
 ```go
 data, err := loader.Load(ctx, sources...)
 if errors.Is(err, parserkit.ErrSourceTooLarge) {
-    // the source exists and is reachable, but exceeds MaxFileSize
+    // the source exists and is reachable, but exceeds MaxBytes
 }
 ```
 
 Match it with `errors.Is` rather than inspecting the message — an oversized
 source and a malformed one are different problems with different fixes.
 
-Pass `math.MaxInt64` as `MaxFileSize` to mean "no limit"; the one-byte overrun
+Pass `math.MaxInt64` as `MaxBytes` to mean "no limit"; the one-byte overrun
 margin saturates rather than overflowing.
 
 ### An empty source counts as a failure
@@ -313,22 +390,73 @@ legitimate state.
 
 ## Testing
 
-Tests do not require a real Redis instance. The suite uses [miniredis](https://github.com/alicebob/miniredis) for Redis-related tests, so you can run tests and coverage locally without any external services:
+Tests do not require a real Redis instance or a real HTTP server. The suite uses
+[miniredis](https://github.com/alicebob/miniredis) and `net/http/httptest`, so
+you can run tests and coverage locally without any external services:
 
 ```bash
 go test ./...
-go test -coverprofile=coverage.out -covermode=atomic ./...
+go test -race -coverprofile=coverage.out -covermode=atomic ./...
 go tool cover -func=coverage.out
 ```
 
 ## Dependencies
 
-- `github.com/soulteary/http-kit` - For HTTP client and retry logic
-- `github.com/redis/go-redis/v9` - For Redis operations
+The root package has none beyond the standard library.
 
-Test-only: `github.com/alicebob/miniredis/v2` for in-process Redis in tests.
+- `github.com/redis/go-redis/v9` — used by `redissource`
+- `github.com/soulteary/http-kit` — used by `remotesource`
+
+Test-only: `github.com/alicebob/miniredis/v2` for in-process Redis, and
+`github.com/stretchr/testify`.
+
+Both moved dependencies keep their minimum versions in this module's `go.mod`,
+and minimum version selection still passes those minimums to anyone who imports
+the subpackages. What the split removes is the requirement for everyone else.
 
 ## Upgrade Notes
+
+### v2.0.0
+
+**The import path changes for every user**, including programs that only read
+files, because Go encodes the major version in the module path:
+
+```go
+import parserkit "github.com/soulteary/parser-kit/v2"
+```
+
+The Redis and HTTP sources moved into subpackages so the root package could
+stop importing go-redis and http-kit. Deprecated shims were not an option: a
+shim for `FromRedis` has to import go-redis, which relinks it and gives the
+entire benefit back.
+
+| v1 | v2 |
+|---|---|
+| `loader.FromFile(ctx, path)` | `loader.LoadOne(ctx, parserkit.File(path))` |
+| `loader.FromRedis(ctx, client, key)` | `loader.LoadOne(ctx, redissource.New(client, key))` |
+| `loader.FromRemote(ctx, url, auth)` | `loader.LoadOne(ctx, remotesource.New(url, remotesource.WithAuthorization(auth)))` |
+| `Source{Type: SourceTypeFile, Priority: n, Config: SourceConfig{FilePath: p}}` | `parserkit.At(n, parserkit.File(p))` |
+| `Source{Type: SourceTypeRedis, …RedisClient: c, RedisKey: k}` | `parserkit.At(n, redissource.New(c, k))` |
+| `Source{Type: SourceTypeRemote, …RemoteURL: u, AuthorizationHeader: a}` | `parserkit.At(n, remote)` from `remotesource.New(u, remotesource.WithAuthorization(a))` |
+| `LoadOptions` | `LoadOptions[T]` |
+| `DefaultLoadOptions()` | `DefaultLoadOptions[T]()` |
+| `LoadOptions.KeyFunc interface{}` | `LoadOptions[T].KeyFunc KeyFunc[T]` |
+| `LoadOptions.MaxFileSize` | `LoadOptions[T].MaxBytes` |
+| `LoadOptions.AllowEmptyFile` | `parserkit.File(path).AllowMissing()` |
+| `LoadOptions.HTTPTimeout` | `remotesource.WithTimeout(d)` |
+| `LoadOptions.MaxRetries` / `.RetryDelay` / `.MaxRetryDelay` | `remotesource.WithRetry(remotesource.RetryPolicy{…})` |
+| `LoadOptions.InsecureSkipVerify` | `remotesource.WithInsecureSkipVerify()` |
+
+Also in v2, and easy to miss:
+
+- **A zero `RetryDelay` no longer means "retry immediately".** v1.7.0 fixed this
+  for `MaxRetryDelay` and left the same hole one field over, so
+  `&LoadOptions{MaxRetries: 3}` retried as fast as the network allowed.
+- **A zero-byte source decodes to an empty list** rather than
+  "unexpected end of JSON input". With the default `AllowEmptyData: false` a
+  fallback chain behaves exactly as before.
+- **`redissource` accepts any go-redis client shape.** v1 asserted
+  `client.(*redis.Client)` and rejected a `*redis.ClusterClient` at run time.
 
 ### v1.8.0
 
