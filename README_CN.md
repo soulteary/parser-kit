@@ -30,7 +30,7 @@
 |---|---|---|
 | `parser-kit/v2` | 加载器、`File`、`BytesFetcher`、`Fetcher` | 仅标准库 |
 | `parser-kit/v2/redissource` | Redis 源 | `go-redis` |
-| `parser-kit/v2/remotesource` | HTTP 源 | `http-kit`（以及 OpenTelemetry） |
+| `parser-kit/v2/remotesource` | HTTP 源 | `http-kit` |
 
 以「只从文件加载」的程序实测，v1.8.0 对比 v2.0.0：二进制从 9,699,758 字节降到
 3,952,636 字节，链接的包从 248 降到 78，它自己的 `go.sum` 从 20 个模块降到 2 个。

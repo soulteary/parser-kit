@@ -35,7 +35,7 @@ links only what it actually reads from:
 |---|---|---|
 | `parser-kit/v2` | the loader, `File`, `BytesFetcher`, `Fetcher` | standard library only |
 | `parser-kit/v2/redissource` | the Redis source | `go-redis` |
-| `parser-kit/v2/remotesource` | the HTTP source | `http-kit` (and OpenTelemetry) |
+| `parser-kit/v2/remotesource` | the HTTP source | `http-kit` |
 
 Measured for a program that loads from a file, v1.8.0 against v2.0.0: the
 binary goes from 9,699,758 to 3,952,636 bytes, linked packages from 248 to 78,
