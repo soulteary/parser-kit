@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"time"
 
-	parserkit "github.com/soulteary/parser-kit/v2"
-	"github.com/soulteary/parser-kit/v2/remotesource"
+	parserkit "github.com/soulteary/parser-kit/v3"
+	"github.com/soulteary/parser-kit/v3/remotesource"
 )
 
 type Rule struct {

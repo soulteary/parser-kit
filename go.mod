@@ -1,4 +1,4 @@
-module github.com/soulteary/parser-kit/v2
+module github.com/soulteary/parser-kit/v3
 
 go 1.27.0
 

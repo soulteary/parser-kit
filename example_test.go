@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	parserkit "github.com/soulteary/parser-kit/v2"
+	parserkit "github.com/soulteary/parser-kit/v3"
 )
 
 type Rule struct {
