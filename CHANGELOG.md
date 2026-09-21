@@ -10,6 +10,64 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-09-21
+
+### Changed — BEHAVIOUR
+
+- **`remotesource` no longer propagates trace context unless asked.** It used
+  to call `otel.GetTextMapPropagator()` on every fetch, through http-kit v1's
+  `Client.InjectTraceContext`. Two consequences, and this release trades the
+  first away to be rid of the second:
+
+  1. A service that configured a **global** OpenTelemetry propagator got trace
+     headers on these requests without asking. It will not any more. **This
+     compiles either way and fails silently** — the fetches simply stop
+     carrying the headers. If you relied on it, one line brings it back:
+
+     ```go
+     import "github.com/soulteary/http-kit/v2/otelprop"
+
+     remotesource.New(url, remotesource.WithPropagator(otelprop.Global()))
+     ```
+
+  2. Every service importing `remotesource` linked OpenTelemetry, traced or
+     not — six modules for a feature most of them never used.
+
+  A caller supplying its own client through `WithClient` was never affected
+  and still is not: it sets `Propagator` on that client's `httpkit.Options`.
+
+### Added
+
+- **`remotesource.WithPropagator`**, which injects cross-process context —
+  trace headers, baggage, a request ID — into every request the source sends.
+  It takes `httpkit.Propagator`, so `otelprop.Global()` restores the old
+  behaviour and a `PropagatorFunc` covers a house convention without pulling
+  in OpenTelemetry at all.
+
+  Injection now happens inside http-kit's `Do`, which runs on **every retry
+  attempt**. The old call site injected once, before the retry loop, so a
+  replayed request went out carrying whatever the first attempt had.
+
+### Dependencies
+
+- **http-kit v1.5.0 → v2.0.0.** Measured for a program importing
+  `parser-kit/v2/remotesource`, `-trimpath`, go1.27.0 linux/amd64:
+
+  | | v2.0.0 | v2.1.0 |
+  |---|---|---|
+  | modules in `go list -m all` | 24 | 17 |
+  | `go.sum` lines | 23 | 6 |
+  | `// indirect` requirements in the consumer's `go.mod` | 8 | 1 |
+  | linked packages | 229 | 202 |
+  | binary size | 9,565,564 bytes | 8,169,973 bytes (−14.6%) |
+
+  Six modules leave the graph — `go.opentelemetry.io/otel`, `otel/metric`,
+  `otel/trace`, `auto/sdk`, `go-logr/logr` and `go-logr/stdr` — along with
+  `golang.org/x/sys`.
+
+  A service that *does* trace pays what it paid before: it imports `otelprop`
+  and gets OpenTelemetry back, deliberately.
+
 ## [2.0.0] — 2026-09-21
 
 One major release, not three. Every breaking change that was worth making is

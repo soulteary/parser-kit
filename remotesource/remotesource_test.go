@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	httpkit "github.com/soulteary/http-kit"
+	httpkit "github.com/soulteary/http-kit/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 

@@ -12,8 +12,10 @@
 //	parserkit/remotesource     an HTTP source            (http-kit)
 //
 // Importing the root package alone costs nothing beyond the standard library.
-// A service that reads its rules from a file on disk does not link go-redis,
-// http-kit or OpenTelemetry, and none of them appear in its go.sum.
+// A service that reads its rules from a file on disk does not link go-redis or
+// http-kit, and neither appears in its go.sum. Since http-kit v2, importing
+// parserkit/remotesource no longer links OpenTelemetry either -- trace
+// propagation is opt-in, through remotesource.WithPropagator.
 //
 // # Sources
 //

@@ -1,10 +1,14 @@
 // Package remotesource loads parser-kit data from an HTTP endpoint.
 //
 // It lives in its own package so that importing the root package does not drag
-// http-kit -- and with it OpenTelemetry, go-logr and golang.org/x/sys -- into
-// binaries that never fetch anything over HTTP. A service whose rules live on
-// disk or in Redis pays nothing for remote support existing; only importing
-// this package links it in.
+// http-kit into binaries that never fetch anything over HTTP. A service whose
+// rules live on disk or in Redis pays nothing for remote support existing;
+// only importing this package links it in.
+//
+// Since http-kit v2 that is all it drags: OpenTelemetry, go-logr and
+// golang.org/x/sys are gone from the graph. Trace propagation is now something
+// a caller asks for -- see [WithPropagator] -- rather than something every
+// importer links whether or not it traces.
 //
 //	rules, err := remotesource.New("https://config.internal/rules.json",
 //		remotesource.WithAuthorization("Bearer "+token),
@@ -30,7 +34,7 @@ import (
 	"net/url"
 	"time"
 
-	httpkit "github.com/soulteary/http-kit"
+	httpkit "github.com/soulteary/http-kit/v2"
 
 	parserkit "github.com/soulteary/parser-kit/v2"
 )
@@ -98,6 +102,7 @@ type settings struct {
 	insecureSkipVerify bool
 	client             *httpkit.Client
 	userAgent          string
+	propagator         httpkit.Propagator
 }
 
 // Option configures a Fetcher.
@@ -155,6 +160,27 @@ func WithClient(c *httpkit.Client) Option {
 	return func(s *settings) { s.client = c }
 }
 
+// WithPropagator injects cross-process context -- trace headers, baggage, a
+// request ID -- into every request this source sends. There is none by
+// default.
+//
+// Until http-kit v2 this package called otel.GetTextMapPropagator() on every
+// fetch, so a service that configured a global OpenTelemetry propagator got
+// trace headers without asking, and every service that imported this package
+// linked OpenTelemetry whether it traced or not. To get that behaviour back,
+// ask for it:
+//
+//	import "github.com/soulteary/http-kit/v2/otelprop"
+//
+//	remotesource.New(url, remotesource.WithPropagator(otelprop.Global()))
+//
+// It applies to the client this package builds. A caller supplying its own
+// through [WithClient] sets Propagator on that client's httpkit.Options
+// instead, and this option is then ignored.
+func WithPropagator(p httpkit.Propagator) Option {
+	return func(s *settings) { s.propagator = p }
+}
+
 // Fetcher reads a JSON payload from one HTTP endpoint. It implements
 // parserkit.Fetcher.
 type Fetcher struct {
@@ -198,13 +224,16 @@ func New(rawURL string, opts ...Option) (*Fetcher, error) {
 
 	client := s.client
 	if client == nil {
-		// BaseURL is required by http-kit; requests here carry a full URL, so
-		// it is only ever the origin this source talks to.
+		// Requests here carry a full URL, so BaseURL is only ever the origin
+		// this source talks to. http-kit v2 no longer requires one, but
+		// setting it keeps GetBaseURL answering usefully for anyone holding
+		// the client.
 		client, err = httpkit.NewClient(&httpkit.Options{
 			BaseURL:            parsed.Scheme + "://" + parsed.Host,
 			Timeout:            s.timeout,
 			UserAgent:          s.userAgent,
 			InsecureSkipVerify: s.insecureSkipVerify,
+			Propagator:         s.propagator,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("remotesource: failed to create HTTP client: %w", err)
@@ -273,9 +302,6 @@ func (f *Fetcher) Fetch(ctx context.Context, maxBytes int64) ([]byte, error) {
 	if f.auth != "" {
 		req.Header.Set("Authorization", f.auth)
 	}
-
-	// Inject trace context if available
-	f.client.InjectTraceContext(ctx, req)
 
 	resp, err := f.client.DoRequestWithRetry(ctx, req, f.retryOpts)
 	if err != nil {
