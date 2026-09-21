@@ -68,6 +68,17 @@ also changes the module path. The current one is
   A service that *does* trace pays what it paid before: it imports `otelprop`
   and gets OpenTelemetry back, deliberately.
 
+### CI
+
+- `actions/checkout` v6 → v7, and v4 → v7 in the Go Report Card workflow,
+  which had been left three major versions behind. (Dependabot's own title
+  says "from 4 to 7" because it names the lowest version it found.)
+
+  Nothing a consumer imports changes — a workflow file is never compiled, even
+  though it does travel inside the module zip. It is listed because the release
+  gate is itself a workflow: an action stale enough to stop running would take
+  the tag check down with it, silently.
+
 ## [2.0.0] — 2026-09-21
 
 One major release, not three. Every breaking change that was worth making is
