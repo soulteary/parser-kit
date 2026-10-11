@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "tests": {
+    "total": 105,
+    "passed": 105,
+    "failed": 0,
+    "skipped": 0
+  },
+  "coverage": {
+    "covered_statements": 231,
+    "total_statements": 236,
+    "percentage": 97.88,
+    "threshold": 0
+  },
+  "packages": [
+    {
+      "name": ".",
+      "status": "pass",
+      "tests": 59,
+      "failed": 0,
+      "coverage": 98.46
+    },
+    {
+      "name": "redissource",
+      "status": "pass",
+      "tests": 20,
+      "failed": 0,
+      "coverage": 100
+    },
+    {
+      "name": "remotesource",
+      "status": "pass",
+      "tests": 26,
+      "failed": 0,
+      "coverage": 96
+    }
+  ],
+  "failures": null
+}
