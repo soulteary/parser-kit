@@ -10,8 +10,8 @@ github.com/klauspost/cpuid/v2 v2.4.0 h1:S6Hrbc7+ywsr0r+RLapfGBHfyefhCTwEh3A0tV91
 github.com/klauspost/cpuid/v2 v2.4.0/go.mod h1:19jmZ9mjzoF//ddRSUsv0zfBTJWh3QJh9FNxZTMrGxU=
 github.com/redis/go-redis/v9 v9.23.0 h1:/TTVdJa8BRNsybwwGGnmiYktHNlUXtbOQxlWpHBPL3s=
 github.com/redis/go-redis/v9 v9.23.0/go.mod h1:EWP2UUk+XDaI1s5nQB5mablZN6vccXlmBQTyfnF87D0=
-github.com/soulteary/http-kit/v2 v2.0.0 h1:q+maakPCwz0iRDcrfnQ9Z9BRxdiHGcLnH0wUWVmLmxk=
-github.com/soulteary/http-kit/v2 v2.0.0/go.mod h1:fZJeAYpTvmfyq0Oq7imWxbQS5MIjQCZ8HQDCWCHOrhg=
+github.com/soulteary/http-kit/v2 v2.0.1 h1:R1GnmQ9VvF19QMJzL80RZNaU1DXfRtjI0CY3ClmKc8o=
+github.com/soulteary/http-kit/v2 v2.0.1/go.mod h1:55lJNLvIdicemu0qdJDQ8DYS53ELpk6KB76RrW7hDWc=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
 github.com/yuin/gopher-lua v1.1.2 h1:yF/FjE3hD65tBbt0VXLE13HWS9h34fdzJmrWRXwobGA=
