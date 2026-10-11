@@ -171,6 +171,8 @@ jobs:
     - name: Test, race and coverage (GTR v1.1.2)
       id: go_test_report
       uses: soulteary/go-test-report-action@bf04b539f7bf2a6f67d602da4259904b3dcdeba1    # v1.1.2
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
       with:
         directory: "."
         packages: "./..."
@@ -190,6 +192,10 @@ jobs:
         threshold: "0"
         report: "true"
         commit: "false"
+    - name: Validate complete Go quality evidence
+      if: "!cancelled() && steps.go_report_card.outcome == 'success'"
+      shell: bash
+      run: python3 .github/scripts/verify-go-report.py
     - name: Upload stable reports
       if: "always() && steps.report_cleanup.outcome == 'success'"
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
