@@ -1,6 +1,6 @@
 # Go Report Card
 
-**Grade: B** (76.5%)
+**Grade: A+** (100.0%)
 
 | Metric | Value |
 | ------ | ----- |
@@ -13,10 +13,10 @@
 | ----- | ----- |
 | gofmt | 100% |
 | go_vet | 100% |
-| gocyclo | 0% |
-| ineffassign | 0% |
+| gocyclo | 100% |
+| ineffassign | 100% |
 | license | 100% |
-| misspell | 0% |
+| misspell | 100% |
 
 No issues found. Nice work!
 

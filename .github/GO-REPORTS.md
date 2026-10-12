@@ -5,4 +5,4 @@ Go Test Report v1.1.2 and Go Report Card v1.1.3 are pinned to formal release com
 
 Tags (including slashes), published releases and manual runs produce stable and raw artifacts. Only successful reports for the unchanged default-branch SHA may write the five report files. PRs never write reports. Artifact names come from the producer attempt, and download uses the public API with read-only actions access. Expired/missing/failed/in-progress evidence never suppresses fresh production; per-source writeback serializes.
 
-Manual runs accept source_ref; leave it empty for the selected default branch. Published token releases explicitly dispatch reports for their tag.
+Manual runs accept source_ref; leave it empty for the selected default branch. Release publishers that use GITHUB_TOKEN must explicitly dispatch this workflow for their tag because GitHub suppresses token-created release events. Repositories with automated release publishers include that dispatch; otherwise use a tag push or manual run.
