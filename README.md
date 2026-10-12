@@ -42,7 +42,7 @@ what the split costs a program that does use all three sources.
 
 ## Requirements
 
-- **Go 1.27+** (`go.mod` declares `go 1.27.2`)
+- **Go 1.27.2+** (`go.mod` declares `go 1.27.2`)
 - `github.com/redis/go-redis/v9` — only if you import `redissource`
 - `github.com/soulteary/http-kit/v2` — only if you import `remotesource`
 
