@@ -32,6 +32,9 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v7
+      with:
+        ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
+        persist-credentials: false
 
     - name: Set up Go environment
       uses: actions/setup-go@v7
@@ -114,6 +117,7 @@ jobs:
       uses: actions/checkout@v7
 
       with:
+        ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
         persist-credentials: false
     - name: Set up Go environment
       uses: actions/setup-go@v7
@@ -233,6 +237,13 @@ jobs:
           .github/test-results/
         include-hidden-files: true
         retention-days: 14
+    # Report actions select their own Go; restore the project toolchain.
+    - name: Restore project Go toolchain
+      uses: actions/setup-go@v7
+      with:
+        go-version-file: go.mod
+        cache: false
+
     - name: Reuse GTR coverage profile
       run: cp .github/test-results/coverage.out coverage.out
     - name: Display coverage summary
