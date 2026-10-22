@@ -148,7 +148,7 @@ jobs:
     - name: Reuse GTR coverage profile
       run: cp .github/test-results/coverage.out coverage.out
     - name: Display coverage summary
-      run: go tool cover -func=coverage.out
+      run: GOTOOLCHAIN=auto go tool cover -func=coverage.out
 
     permissions:
       contents: read
