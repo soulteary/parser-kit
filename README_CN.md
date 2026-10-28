@@ -36,7 +36,7 @@
 
 ## 环境要求
 
-- **Go 1.27.2+**（`go.mod` 声明 `go 1.27.2`）
+- **Go 1.27.3+**（`go.mod` 声明 `go 1.27.3`）
 - `github.com/redis/go-redis/v9` —— 仅当你 import `redissource` 时
 - `github.com/soulteary/http-kit/v2` —— 仅当你 import `remotesource` 时
 
