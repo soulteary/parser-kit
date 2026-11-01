@@ -10,6 +10,17 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [3.0.3] — 2026-11-01
+
+### Changed
+
+- Update the released `http-kit/v2` dependency from v2.0.2 to v2.1.0.
+- Update the test-only YAML dependency from v3.0.5 to v3.0.6.
+- Align maintenance checks and report tooling with Go 1.27.3.
+
+The public API and module path remain unchanged. The race-enabled suite,
+static analysis, dependency scanning and Go Report Card pass.
+
 ## [3.0.0] — 2026-09-21
 
 ### Changed — BREAKING
