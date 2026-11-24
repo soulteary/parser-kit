@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/alicebob/miniredis/v2 v2.40.0
-	github.com/redis/go-redis/v9 v9.23.0
+	github.com/redis/go-redis/v9 v9.24.0
 	github.com/soulteary/http-kit/v2 v2.1.2
 	github.com/stretchr/testify v1.12.1
 )
