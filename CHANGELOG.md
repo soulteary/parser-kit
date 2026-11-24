@@ -10,6 +10,19 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+## [3.0.6] - 2026-11-25
+
+### Changed
+
+- Update `github.com/redis/go-redis/v9` from v9.23.0 to v9.24.0.
+
+The update applies to the `redissource` subpackage. The root package does not import the Redis client.
+
+See the [release notes](docs/releases/v3.0.6.md) for Redis client behavior
+changes and upgrade and rollback guidance.
+
+## [3.0.5] - 2026-11-24
+
 ### Changed
 
 - Update `github.com/soulteary/http-kit/v2` from v2.1.1 to v2.1.2.
