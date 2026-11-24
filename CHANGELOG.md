@@ -10,6 +10,14 @@ also changes the module path. The current one is
 
 ## [Unreleased]
 
+### Changed
+
+- Update `github.com/soulteary/http-kit/v2` from v2.1.1 to v2.1.2.
+- Update the indirect `golang.org/x/sys` requirement from v0.49.0 to v0.50.0.
+
+The module path and the public API are unchanged. The minimum Go version
+remains 1.27.4.
+
 ## [3.0.4] — 2026-11-13
 
 ### Changed
